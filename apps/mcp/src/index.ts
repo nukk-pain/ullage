@@ -53,7 +53,7 @@ runMcpServer({
     },
     {
       name: 'add_wine',
-      description: 'Add a bottle. Put the year in `vintage` (integer), not in `name`. quantity defaults to 1. Capture region/varietal/drink-by when known.',
+      description: 'Add a bottle. Put the year in `vintage` (integer), not in `name`. quantity defaults to 1. Capture region/varietal/drink-by when known; from a receipt also capture price, purchaseDate (YYYY-MM-DD), and store.',
       inputSchema: { type: 'object', properties: wineProps, required: ['name'], additionalProperties: false },
       handler: (args) => store.addWine(args as never)
     },

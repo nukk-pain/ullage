@@ -42,7 +42,8 @@ install by calling `cellar_summary`.
   field, not the name) plus **region / varietal / drink-by** when known; `quantity` defaults to 1.
 - When the user shares a **wine label or receipt photo, read it yourself** (your own vision) and
   add the wine(s). For a receipt, add **only the wine bottles** and skip whisky, beer, soju,
-  snacks, sauces, and other non-wine items. Do not invent a vintage that isn't shown.
+  snacks, sauces, and other non-wine items; also record each wine's **price, purchase date, and
+  store** from the receipt. Do not invent a vintage that isn't shown.
 - Let the user **list / update** wines, **consume** bottles (decrement + rating + notes, logged
   to consumption history), review **`list_consumptions`**, and **export** everything.
 - Record **tasting notes any time** with `add_note` (no need to open a bottle) and review them

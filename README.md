@@ -10,31 +10,25 @@ Your wine cellar, run by your AI agent — OpenClaw, Hermes, or any MCP client.
 - **Consumption history** — every bottle opened is logged with date, rating, and notes.
 - **You own the data** — a local SQLite file (`~/.ullage/cellar.db`), export anytime. OSS, MIT.
 
-## Install — give your agent this prompt
+## Install — tell your agent
 
-Paste this to OpenClaw / Hermes / your MCP client. The agent fetches the repo, reads the runbook,
-and sets ullage up itself:
+Give OpenClaw / Hermes / any MCP client this one line:
 
-```text
-Set up ullage as my wine cellar and then manage it for me.
+> Check https://github.com/nukk-pain/ullage and install it.
 
-1. Fetch https://github.com/nukk-pain/ullage and read docs/agent-install.md.
-2. Follow that runbook: build the MCP server and register it with yourself (Hermes / OpenClaw /
-   MCP client), then start a fresh session so the tools load.
-3. After that, whenever I talk about wine:
-   - Add bottles I mention — capture name, producer, and vintage (year in the vintage field),
-     plus region/varietal/drink-by when known.
-   - If I share a wine label or receipt photo, read it yourself and add the wine(s). For a
-     receipt, add only the wine bottles and skip whisky, beer, soju, snacks, and non-wine items.
-   - Let me list the cellar, update wines, consume bottles (with rating + notes), see consumption
-     history, and export everything.
-   Always check the cellar summary first so you work from the current state.
-```
+The agent reads [docs/agent-install.md](docs/agent-install.md), installs the MCP server for your
+runner (local SQLite — no token, no Docker), starts a fresh session, and then manages your cellar
+per that runbook.
 
-Then just talk: *"add a Barolo 2016"*, *"what's in my cellar?"*, *"I opened the Chablis — 4.5/5"*,
-or share a photo.
+> **Agent reading this repo:** follow [docs/agent-install.md](docs/agent-install.md) to install
+> and then operate the cellar. You need a shell with `git` and Node.js 20+.
 
-(Install details: [docs/agent-install.md](docs/agent-install.md).)
+Then just talk:
+- *"Add a Barolo 2016."* — or share a **wine label photo**; it reads the label and adds the bottle.
+- Share a **receipt photo** — it adds the wines (with price, purchase date, and store) and skips
+  whisky, snacks, and other non-wine items.
+- *"I drank the Chablis tonight — 2/5, too light."* — logged with your rating and note.
+- *"What should I drink with fried chicken?"* — it recommends from your cellar.
 
 ## How it works
 
