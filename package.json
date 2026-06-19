@@ -1,0 +1,23 @@
+{
+  "name": "ullage",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "npm run build --workspaces --if-present && npm run check --workspaces --if-present",
+    "test": "npm run build --workspaces --if-present && npm run test --workspaces --if-present",
+    "dev:mcp": "npm run dev --workspace @ullage/mcp",
+    "build:mcp": "npm run build --workspace @ullage/mcp"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

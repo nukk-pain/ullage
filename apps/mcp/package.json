@@ -1,0 +1,57 @@
+{
+  "name": "@ullage/mcp",
+  "version": "0.1.0",
+  "description": "Zero-config MCP server for an ullage wine cellar — local SQLite, no token or Docker. Plug into OpenClaw, Hermes, or any MCP client.",
+  "type": "module",
+  "license": "MIT",
+  "author": "ullage contributors",
+  "homepage": "https://github.com/nukk-pain/ullage/tree/main/apps/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nukk-pain/ullage.git",
+    "directory": "apps/mcp"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "wine",
+    "cellar",
+    "ullage",
+    "openclaw",
+    "hermes",
+    "sqlite",
+    "agent"
+  ],
+  "bin": {
+    "ullage-mcp": "dist/index.js",
+    "mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@ullage/domain": "^0.1.0",
+    "better-sqlite3": "^12.11.1"
+  }
+}
