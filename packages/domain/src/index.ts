@@ -18,6 +18,7 @@ export type Wine = {
   location: string | null;
   createdAt: string;
   updatedAt: string;
+  hold?: WineHold | null;
 };
 
 export type ConsumptionEvent = {
@@ -60,8 +61,75 @@ export type TastingNote = {
   createdAt: string;
 };
 
+export type WineHold = {
+  id: string;
+  wineId: string;
+  reason: string | null;
+  createdAt: string;
+  releasedAt: string | null;
+};
+
+export type BatchImportSource = 'receipt' | 'label_photo' | 'manual_batch';
+
+export type BatchImportItemInput = AddWineInput & {
+  readonly itemKey?: unknown;
+  readonly kind?: unknown;
+};
+
+export type BatchImportInput = {
+  readonly idempotencyKey: unknown;
+  readonly source: BatchImportSource;
+  readonly sourceId?: unknown;
+  readonly items: readonly BatchImportItemInput[];
+};
+
+export type NormalizedBatchImportItem = NormalizedWineFields & {
+  readonly itemKey: string | null;
+};
+
+export type NormalizedBatchImport = {
+  readonly idempotencyKey: string;
+  readonly source: BatchImportSource;
+  readonly sourceId: string | null;
+  readonly items: readonly NormalizedBatchImportItem[];
+};
+
+export type BatchImportResult = {
+  readonly id: string;
+  readonly source: BatchImportSource;
+  readonly sourceId: string | null;
+  readonly wines: readonly Wine[];
+  readonly createdAt: string;
+};
+
+export type WriteOptions = {
+  readonly idempotencyKey?: string;
+};
+
+export type HoldInput = WriteOptions & {
+  readonly reason?: unknown;
+};
+
+export type ReleaseHoldInput = WriteOptions;
+
+export type RecommendationInput = {
+  readonly occasion?: unknown;
+  readonly limit?: unknown;
+  readonly includeHeld?: unknown;
+};
+
+export type WineRecommendation = {
+  readonly wine: Wine;
+  readonly reason: string;
+};
+
+export type RecommendationResult = {
+  readonly recommendations: readonly WineRecommendation[];
+  readonly excludedHeld: readonly Wine[];
+};
+
 // A cellar activity-log entry: every change to the cellar, as a one-line summary.
-export type ActivityAction = 'add' | 'update' | 'consume' | 'note';
+export type ActivityAction = 'add' | 'update' | 'consume' | 'note' | 'batch_add' | 'hold' | 'release';
 export type ActivityEvent = {
   id: string;
   action: ActivityAction;
@@ -75,8 +143,7 @@ export function requireText(value: unknown, field: string): string {
   return value.trim();
 }
 
-// The normalized column values for a new wine (no id/timestamps).
-export type NormalizedWineFields = Omit<Wine, 'id' | 'createdAt' | 'updatedAt'>;
+export type NormalizedWineFields = Omit<Wine, 'id' | 'createdAt' | 'updatedAt' | 'hold'>;
 
 export function requireName(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error('name is required');
@@ -132,4 +199,47 @@ export function normalizeAddWine(input: AddWineInput): NormalizedWineFields {
     drinkByDate: optionalDate(input.drinkByDate),
     location: optionalString(input.location)
   };
+}
+
+export function normalizeIdempotencyKey(value: unknown): string {
+  return requireText(value, 'idempotencyKey');
+}
+
+export function normalizeBatchImport(input: BatchImportInput): NormalizedBatchImport {
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  if (!Array.isArray(input.items) || input.items.length === 0) throw new Error('items must include at least one wine row');
+  const seen = new Set<string>();
+  const items = input.items.map((item, index) => {
+    if (item.kind === 'non_wine') throw new Error(`non-wine receipt row at index ${index}`);
+    const itemKey = optionalString(item.itemKey);
+    if (itemKey !== null) {
+      if (seen.has(itemKey)) throw new Error(`duplicate itemKey ${itemKey}`);
+      seen.add(itemKey);
+    }
+    return { ...normalizeAddWine(item), itemKey };
+  });
+  return {
+    idempotencyKey,
+    source: input.source,
+    sourceId: optionalString(input.sourceId),
+    items
+  };
+}
+
+const APPEND_ONLY_FORBIDDEN_FIELDS = new Set<keyof AddWineInput>([
+  'name',
+  'producer',
+  'vintage',
+  'region',
+  'country',
+  'varietal',
+  'price',
+  'store',
+  'purchaseDate',
+  'drinkByDate',
+  'location'
+]);
+
+export function forbiddenAppendOnlyFields(input: Partial<AddWineInput>): string[] {
+  return Object.keys(input).filter((key) => APPEND_ONLY_FORBIDDEN_FIELDS.has(key as keyof AddWineInput)).sort();
 }

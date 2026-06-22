@@ -2,111 +2,98 @@ import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { CellarExport, CellarStore, CellarSummary } from './cellar-store.js';
+import { initializeSqliteSchema, runIdempotent } from './sqlite-schema.js';
 import {
+  describe,
+  parseImportRow,
+  rowToActivity,
+  rowToConsumption,
+  rowToHold,
+  rowToNote,
+  rowToWine,
+  stripUndefined,
+  truncate,
+  wineSelectSql,
+  wineToInput,
+  type ActivityRow, type ConsumptionRow, type HoldRow, type ImportRow, type NoteRow, type WineJoinRow
+} from './sqlite-rows.js';
+import {
+  forbiddenAppendOnlyFields,
   normalizeAddWine,
+  normalizeBatchImport,
   normalizeQuantity,
+  optionalInt,
   optionalNumber,
   optionalString,
   requireText,
-  type ActivityAction,
-  type ActivityEvent,
-  type AddWineInput,
-  type ConsumeInput,
-  type ConsumptionEvent,
-  type TastingNote,
-  type Wine
+  type ActivityAction, type ActivityEvent, type AddWineInput, type BatchImportInput,
+  type BatchImportResult, type ConsumeInput, type ConsumptionEvent, type HoldInput,
+  type RecommendationInput, type RecommendationResult, type ReleaseHoldInput,
+  type TastingNote, type Wine, type WineHold, type WriteOptions
 } from '@ullage/domain';
 
-// Local, single-user cellar backed by SQLite. No server, no token — the file is the cellar.
-export class SqliteCellarStore {
-  private readonly db: Database.Database;
+export type SqliteCellarStoreOptions = {
+  readonly appendOnly?: boolean;
+};
 
-  constructor(dbPath: string) {
+export class SqliteCellarStore implements CellarStore {
+  private readonly db: Database.Database;
+  private readonly appendOnly: boolean;
+
+  constructor(dbPath: string, options: SqliteCellarStoreOptions = {}) {
     if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS wines (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        producer TEXT,
-        vintage INTEGER,
-        region TEXT,
-        country TEXT,
-        varietal TEXT,
-        price REAL,
-        quantity INTEGER NOT NULL DEFAULT 1,
-        rating REAL,
-        notes TEXT,
-        store TEXT,
-        purchase_date TEXT,
-        drink_by_date TEXT,
-        location TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS consumption_events (
-        id TEXT PRIMARY KEY,
-        wine_id TEXT NOT NULL,
-        quantity INTEGER NOT NULL DEFAULT 1,
-        rating REAL,
-        notes TEXT,
-        consumed_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_consumption_wine ON consumption_events(wine_id, consumed_at);
-      CREATE TABLE IF NOT EXISTS tasting_notes (
-        id TEXT PRIMARY KEY,
-        wine_id TEXT NOT NULL,
-        note TEXT NOT NULL,
-        rating REAL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_notes_wine ON tasting_notes(wine_id, created_at);
-      CREATE TABLE IF NOT EXISTS activity_log (
-        id TEXT PRIMARY KEY,
-        action TEXT NOT NULL,
-        wine_id TEXT,
-        summary TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(created_at);
-    `);
+    this.appendOnly = options.appendOnly === true;
+    initializeSqliteSchema(this.db);
   }
 
-  addWine(input: AddWineInput): Wine {
-    const f = normalizeAddWine(input);
-    const now = new Date().toISOString();
-    const wine: Wine = { id: randomUUID(), ...f, createdAt: now, updatedAt: now };
-    this.db.transaction(() => {
-      this.db
-        .prepare(
-          `INSERT INTO wines (id, name, producer, vintage, region, country, varietal, price, quantity,
-             rating, notes, store, purchase_date, drink_by_date, location, created_at, updated_at)
-           VALUES (@id, @name, @producer, @vintage, @region, @country, @varietal, @price, @quantity,
-             @rating, @notes, @store, @purchaseDate, @drinkByDate, @location, @createdAt, @updatedAt)`
-        )
-        .run(wine);
-      this.logActivity('add', wine.id, `Added ${describe(wine)} x${wine.quantity}`);
-    })();
-    return wine;
+  addWine(input: AddWineInput, options: WriteOptions = {}): Wine {
+    return this.idempotent('addWine', options.idempotencyKey, input, () => this.insertWine(normalizeAddWine(input), 'add'));
+  }
+
+  importWines(input: BatchImportInput): BatchImportResult {
+    const normalized = normalizeBatchImport(input);
+    return this.idempotent('importWines', normalized.idempotencyKey, normalized, () => {
+      const now = new Date().toISOString();
+      const wines = normalized.items.map((item) => {
+        const { itemKey: _itemKey, ...fields } = item;
+        return this.insertWine(fields, 'batch_add', now);
+      });
+      const result: BatchImportResult = { id: randomUUID(), source: normalized.source, sourceId: normalized.sourceId, wines, createdAt: now };
+      this.db.prepare('INSERT INTO batch_imports (id, source, source_id, result_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
+        result.id,
+        result.source,
+        result.sourceId,
+        JSON.stringify(result),
+        result.createdAt
+      );
+      this.logActivity('batch_add', null, `Imported ${wines.length} wines from ${normalized.source}`);
+      return result;
+    });
   }
 
   listWines(): Wine[] {
-    return (this.db.prepare('SELECT * FROM wines ORDER BY created_at DESC').all() as WineRow[]).map(rowToWine);
+    return (this.db.prepare(`${wineSelectSql()} ORDER BY w.created_at DESC`).all() as WineJoinRow[]).map(rowToWine);
   }
 
   getWine(id: string): Wine | undefined {
-    const row = this.db.prepare('SELECT * FROM wines WHERE id = ?').get(id) as WineRow | undefined;
+    const row = this.db.prepare(`${wineSelectSql()} WHERE w.id = ?`).get(id) as WineJoinRow | undefined;
     return row ? rowToWine(row) : undefined;
   }
 
-  updateWine(id: string, input: Partial<AddWineInput>): Wine | undefined {
-    const existing = this.getWine(id);
-    if (!existing) return undefined;
-    const patch = stripUndefined(input);
-    const changed = Object.keys(patch);
-    const f = normalizeAddWine({ ...wineToInput(existing), ...patch });
-    const now = new Date().toISOString();
-    this.db.transaction(() => {
+  updateWine(id: string, input: Partial<AddWineInput>, options: WriteOptions = {}): Wine | undefined {
+    return this.idempotent('updateWine', options.idempotencyKey, { id, input }, () => {
+      const existing = this.getWine(id);
+      if (!existing) return undefined;
+      const patch = stripUndefined(input);
+      const changed = Object.keys(patch);
+      if (this.appendOnly && changed.length > 0) {
+        const forbidden = forbiddenAppendOnlyFields(patch);
+        throw new Error(`append-only mode rejects update_wine; record consume, hold, release, or note events instead${forbidden.length ? `: ${forbidden.join(', ')}` : ''}`);
+      }
+      const f = normalizeAddWine({ ...wineToInput(existing), ...patch });
+      const now = new Date().toISOString();
       this.db
         .prepare(
           `UPDATE wines SET name=@name, producer=@producer, vintage=@vintage, region=@region,
@@ -116,30 +103,28 @@ export class SqliteCellarStore {
         )
         .run({ ...f, id, updatedAt: now });
       this.logActivity('update', id, `Updated ${describe({ ...existing, ...f })}: ${changed.join(', ') || 'no fields'}`);
-    })();
-    return this.getWine(id);
+      return this.getWine(id);
+    });
   }
 
-  // Consume bottles: log the actual amount taken (never more than on hand), with the per-pour
-  // rating/notes recorded on the consumption event — the wine's own rating/notes are not touched
-  // (use update_wine / add_note for those).
-  consumeWine(id: string, input: ConsumeInput): Wine | undefined {
-    const existing = this.getWine(id);
-    if (!existing) return undefined;
-    const requested = normalizeQuantity(input.quantity, 1);
-    const consumed = Math.min(requested, existing.quantity);
-    if (consumed <= 0) throw new Error(`No bottles of ${describe(existing)} left to open`);
-    const rating = optionalNumber(input.rating);
-    const notes = optionalString(input.notes);
-    const now = new Date().toISOString();
-    this.db.transaction(() => {
+  consumeWine(id: string, input: ConsumeInput, options: WriteOptions = {}): Wine | undefined {
+    return this.idempotent('consumeWine', options.idempotencyKey, { id, input }, () => {
+      const existing = this.getWine(id);
+      if (!existing) return undefined;
+      if (existing.hold) throw new Error(`${describe(existing)} is on hold; release it before consuming`);
+      const requested = normalizeQuantity(input.quantity, 1);
+      const consumed = Math.min(requested, existing.quantity);
+      if (consumed <= 0) throw new Error(`No bottles of ${describe(existing)} left to open`);
+      const rating = optionalNumber(input.rating);
+      const notes = optionalString(input.notes);
+      const now = new Date().toISOString();
       this.db.prepare('UPDATE wines SET quantity=?, updated_at=? WHERE id=?').run(existing.quantity - consumed, now, id);
       this.db
         .prepare('INSERT INTO consumption_events (id, wine_id, quantity, rating, notes, consumed_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(randomUUID(), id, consumed, rating, notes, now);
       this.logActivity('consume', id, `Opened ${consumed} of ${describe(existing)}${rating !== null ? ` (${rating})` : ''}`);
-    })();
-    return this.getWine(id);
+      return this.getWine(id);
+    });
   }
 
   listConsumptions(wineId?: string): ConsumptionEvent[] {
@@ -149,23 +134,15 @@ export class SqliteCellarStore {
     return (rows as ConsumptionRow[]).map(rowToConsumption);
   }
 
-  addNote(wineId: string, note: unknown, rating?: unknown): TastingNote {
-    const wine = this.getWine(wineId);
-    if (!wine) throw new Error(`No wine with id ${wineId}`);
-    const event: TastingNote = {
-      id: randomUUID(),
-      wineId,
-      note: requireText(note, 'note'),
-      rating: optionalNumber(rating),
-      createdAt: new Date().toISOString()
-    };
-    this.db.transaction(() => {
-      this.db
-        .prepare('INSERT INTO tasting_notes (id, wine_id, note, rating, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(event.id, event.wineId, event.note, event.rating, event.createdAt);
+  addNote(wineId: string, note: unknown, rating?: unknown, options: WriteOptions = {}): TastingNote {
+    return this.idempotent('addNote', options.idempotencyKey, { wineId, note, rating }, () => {
+      const wine = this.getWine(wineId);
+      if (!wine) throw new Error(`No wine with id ${wineId}`);
+      const event: TastingNote = { id: randomUUID(), wineId, note: requireText(note, 'note'), rating: optionalNumber(rating), createdAt: new Date().toISOString() };
+      this.db.prepare('INSERT INTO tasting_notes (id, wine_id, note, rating, created_at) VALUES (?, ?, ?, ?, ?)').run(event.id, event.wineId, event.note, event.rating, event.createdAt);
       this.logActivity('note', wineId, `Note on ${describe(wine)}: ${truncate(event.note, 60)}`);
-    })();
-    return event;
+      return event;
+    });
   }
 
   listNotes(wineId?: string): TastingNote[] {
@@ -175,78 +152,94 @@ export class SqliteCellarStore {
     return (rows as NoteRow[]).map(rowToNote);
   }
 
-  listActivity(limit = 50): ActivityEvent[] {
-    const n = Math.trunc(Number(limit));
-    const safe = Number.isFinite(n) && n > 0 ? n : 50;
-    return (this.db.prepare('SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?').all(safe) as ActivityRow[]).map(rowToActivity);
+  holdWine(id: string, input: HoldInput): WineHold {
+    return this.idempotent('holdWine', input.idempotencyKey, { id, reason: input.reason }, () => {
+      const wine = this.getWine(id);
+      if (!wine) throw new Error(`No wine with id ${id}`);
+      if (wine.hold) return wine.hold;
+      const hold: WineHold = { id: randomUUID(), wineId: id, reason: optionalString(input.reason), createdAt: new Date().toISOString(), releasedAt: null };
+      this.db.prepare('INSERT INTO wine_holds (id, wine_id, reason, created_at, released_at) VALUES (?, ?, ?, ?, ?)').run(hold.id, hold.wineId, hold.reason, hold.createdAt, hold.releasedAt);
+      this.logActivity('hold', id, `Held ${describe(wine)}${hold.reason ? `: ${hold.reason}` : ''}`);
+      return hold;
+    });
   }
 
-  summary(): { wine_count: number; bottle_count: number; recent_wines: Array<{ id: string; name: string; quantity: number }> } {
-    const wines = this.listWines();
+  releaseHold(id: string, input: ReleaseHoldInput): WineHold {
+    return this.idempotent('releaseHold', input.idempotencyKey, { id }, () => {
+      const wine = this.getWine(id);
+      if (!wine) throw new Error(`No wine with id ${id}`);
+      if (!wine.hold) throw new Error(`No active hold for wine ${id}`);
+      const released: WineHold = { ...wine.hold, releasedAt: new Date().toISOString() };
+      this.db.prepare('UPDATE wine_holds SET released_at = ? WHERE id = ?').run(released.releasedAt, released.id);
+      this.logActivity('release', id, `Released hold on ${describe(wine)}`);
+      return released;
+    });
+  }
+
+  listHolds(): WineHold[] {
+    return (this.db.prepare('SELECT * FROM wine_holds WHERE released_at IS NULL ORDER BY created_at DESC').all() as HoldRow[]).map(rowToHold);
+  }
+
+  recommendWines(input: RecommendationInput): RecommendationResult {
+    const limit = Math.max(1, optionalInt(input.limit) ?? 5);
+    const includeHeld = input.includeHeld === true;
+    const wines = this.listWines().filter((wine) => wine.quantity > 0);
+    const available = includeHeld ? wines : wines.filter((wine) => !wine.hold);
+    const excludedHeld = includeHeld ? [] : wines.filter((wine) => wine.hold !== undefined && wine.hold !== null);
+    const occasion = optionalString(input.occasion);
     return {
-      wine_count: wines.length,
-      bottle_count: wines.reduce((sum, w) => sum + w.quantity, 0),
-      recent_wines: wines.slice(0, 5).map((w) => ({ id: w.id, name: w.name, quantity: w.quantity }))
+      recommendations: available.slice(0, limit).map((wine) => ({ wine, reason: occasion ? `Available for ${occasion}` : 'Available and not on hold' })),
+      excludedHeld
     };
   }
 
-  // Full, unbounded export for backup / data ownership.
-  exportJson(): { wines: Wine[]; consumptions: ConsumptionEvent[]; notes: TastingNote[]; activity: ActivityEvent[] } {
+  listActivity(limit = 50): ActivityEvent[] {
+    const safe = Math.max(1, optionalInt(limit) ?? 50);
+    return (this.db.prepare('SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?').all(safe) as ActivityRow[]).map(rowToActivity);
+  }
+
+  summary(): CellarSummary {
+    const wines = this.listWines();
+    return {
+      wine_count: wines.length,
+      bottle_count: wines.reduce((sum, wine) => sum + wine.quantity, 0),
+      recent_wines: wines.slice(0, 5).map((wine) => ({ id: wine.id, name: wine.name, quantity: wine.quantity, hold: wine.hold ?? null }))
+    };
+  }
+
+  exportJson(): CellarExport {
     const activity = (this.db.prepare('SELECT * FROM activity_log ORDER BY created_at DESC').all() as ActivityRow[]).map(rowToActivity);
-    return { wines: this.listWines(), consumptions: this.listConsumptions(), notes: this.listNotes(), activity };
+    const imports = (this.db.prepare('SELECT result_json FROM batch_imports ORDER BY created_at DESC').all() as ImportRow[]).map(parseImportRow);
+    return { wines: this.listWines(), consumptions: this.listConsumptions(), notes: this.listNotes(), activity, holds: this.allHolds(), imports };
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  private insertWine(f: ReturnType<typeof normalizeAddWine>, action: Extract<ActivityAction, 'add' | 'batch_add'>, now = new Date().toISOString()): Wine {
+    const wine: Wine = { id: randomUUID(), ...f, createdAt: now, updatedAt: now, hold: null };
+    this.db
+      .prepare(
+        `INSERT INTO wines (id, name, producer, vintage, region, country, varietal, price, quantity,
+           rating, notes, store, purchase_date, drink_by_date, location, created_at, updated_at)
+         VALUES (@id, @name, @producer, @vintage, @region, @country, @varietal, @price, @quantity,
+           @rating, @notes, @store, @purchaseDate, @drinkByDate, @location, @createdAt, @updatedAt)`
+      )
+      .run(wine);
+    if (action === 'add') this.logActivity('add', wine.id, `Added ${describe(wine)} x${wine.quantity}`);
+    return wine;
+  }
+
+  private idempotent<T>(operation: string, key: string | undefined, payload: unknown, work: () => T): T {
+    return runIdempotent(this.db, operation, key, payload, work);
+  }
+
+  private allHolds(): WineHold[] {
+    return (this.db.prepare('SELECT * FROM wine_holds ORDER BY created_at DESC').all() as HoldRow[]).map(rowToHold);
   }
 
   private logActivity(action: ActivityAction, wineId: string | null, summary: string): void {
-    this.db
-      .prepare('INSERT INTO activity_log (id, action, wine_id, summary, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(randomUUID(), action, wineId, summary, new Date().toISOString());
+    this.db.prepare('INSERT INTO activity_log (id, action, wine_id, summary, created_at) VALUES (?, ?, ?, ?, ?)').run(randomUUID(), action, wineId, summary, new Date().toISOString());
   }
-}
-
-type WineRow = {
-  id: string; name: string; producer: string | null; vintage: number | null; region: string | null;
-  country: string | null; varietal: string | null; price: number | null; quantity: number;
-  rating: number | null; notes: string | null; store: string | null; purchase_date: string | null;
-  drink_by_date: string | null; location: string | null; created_at: string; updated_at: string;
-};
-type ConsumptionRow = { id: string; wine_id: string; quantity: number; rating: number | null; notes: string | null; consumed_at: string };
-type NoteRow = { id: string; wine_id: string; note: string; rating: number | null; created_at: string };
-type ActivityRow = { id: string; action: string; wine_id: string | null; summary: string; created_at: string };
-
-function rowToWine(r: WineRow): Wine {
-  return {
-    id: r.id, name: r.name, producer: r.producer, vintage: r.vintage, region: r.region,
-    country: r.country, varietal: r.varietal, price: r.price, quantity: r.quantity, rating: r.rating,
-    notes: r.notes, store: r.store, purchaseDate: r.purchase_date, drinkByDate: r.drink_by_date,
-    location: r.location, createdAt: r.created_at, updatedAt: r.updated_at
-  };
-}
-function rowToConsumption(r: ConsumptionRow): ConsumptionEvent {
-  return { id: r.id, wineId: r.wine_id, quantity: r.quantity, rating: r.rating, notes: r.notes, consumedAt: r.consumed_at };
-}
-function rowToNote(r: NoteRow): TastingNote {
-  return { id: r.id, wineId: r.wine_id, note: r.note, rating: r.rating, createdAt: r.created_at };
-}
-function rowToActivity(r: ActivityRow): ActivityEvent {
-  return { id: r.id, action: r.action as ActivityAction, wineId: r.wine_id, summary: r.summary, createdAt: r.created_at };
-}
-
-function wineToInput(w: Wine): AddWineInput {
-  return {
-    name: w.name, producer: w.producer ?? undefined, vintage: w.vintage ?? undefined,
-    region: w.region ?? undefined, country: w.country ?? undefined, varietal: w.varietal ?? undefined,
-    price: w.price ?? undefined, quantity: w.quantity, notes: w.notes ?? undefined,
-    store: w.store ?? undefined, purchaseDate: w.purchaseDate ?? undefined,
-    drinkByDate: w.drinkByDate ?? undefined, location: w.location ?? undefined
-  };
-}
-function stripUndefined(input: Partial<AddWineInput>): Partial<AddWineInput> {
-  return Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) as Partial<AddWineInput>;
-}
-function describe(w: Pick<Wine, 'name' | 'vintage'>): string {
-  return [w.name, w.vintage].filter(Boolean).join(' ');
-}
-function truncate(s: string, n: number): string {
-  const chars = Array.from(s);
-  return chars.length > n ? `${chars.slice(0, n - 1).join('')}…` : s;
 }
