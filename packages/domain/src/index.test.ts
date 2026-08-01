@@ -1,13 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  filterTastings,
+  filterWines,
   forbiddenAppendOnlyFields,
   normalizeAddWine,
   normalizeBatchImport,
   normalizeIdempotencyKey,
+  normalizeRecordTasting,
+  normalizeTastingQuery,
   optionalDate,
   optionalInt,
-  requireName
+  requireName,
+  resolveWineByName,
+  type Tasting,
+  type Wine
 } from './index.js';
 
 test('normalizeAddWine validates and normalizes fields', () => {
@@ -70,4 +77,102 @@ test('domain idempotency and batch import contracts normalize receipt rows and r
   );
 
   assert.deepEqual(forbiddenAppendOnlyFields({ name: 'New name', quantity: 2, region: 'Loire' }), ['name', 'region']);
+});
+
+function wineFixture(overrides: Partial<Wine>): Wine {
+  return {
+    id: 'wine-x', name: 'Wine', producer: null, vintage: null, region: null, country: null,
+    varietal: null, price: null, quantity: 1, rating: null, notes: null, store: null,
+    purchaseDate: null, drinkByDate: null, location: null,
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', hold: null,
+    ...overrides
+  };
+}
+
+test('normalizeRecordTasting requires name and tastedAt and normalizes optionals', () => {
+  const tasting = normalizeRecordTasting({
+    name: '  Brunello di Montalcino  ', tastedAt: '2026-07-30', venue: 'Osteria', vintage: '2019',
+    rating: '4.5', foodPairing: ['bistecca', '', 42 as unknown]
+  });
+  assert.equal(tasting.wineName, 'Brunello di Montalcino');
+  assert.equal(tasting.tastedAt, '2026-07-30');
+  assert.equal(tasting.venue, 'Osteria');
+  assert.equal(tasting.vintage, 2019);
+  assert.equal(tasting.rating, 4.5);
+  assert.deepEqual(tasting.foodPairing, ['bistecca']);
+
+  assert.throws(() => normalizeRecordTasting({ name: 'Barolo', tastedAt: 'not a date' }), /tastedAt is required/);
+  assert.throws(() => normalizeRecordTasting({ name: '  ', tastedAt: '2026-07-30' }), /name is required/);
+});
+
+test('normalizeTastingQuery validates source and defaults limit/offset', () => {
+  const query = normalizeTastingQuery({ source: 'external', minRating: '4', limit: 10 });
+  assert.equal(query.source, 'external');
+  assert.equal(query.minRating, 4);
+  assert.equal(query.limit, 10);
+  assert.equal(query.offset, 0);
+  assert.equal(normalizeTastingQuery().source, null);
+  assert.throws(() => normalizeTastingQuery({ source: 'bar' }), /source must be/);
+});
+
+test('filterTastings applies source, rating, venue, and text filters over the unified timeline', () => {
+  const tastings: Tasting[] = [
+    {
+      id: 't-1', source: 'external', wineId: null, wineName: 'Barolo', vintage: 2016, producer: null,
+      region: 'Piedmont', venue: 'Osteria Roma', foodPairing: null, rating: 4.5, price: null,
+      currency: null, notes: 'great', tastedAt: '2026-07-30', createdAt: '2026-07-30T12:00:00.000Z'
+    },
+    {
+      id: 't-2', source: 'cellar', wineId: 'wine-1', wineName: 'Chablis', vintage: 2020, producer: 'Raveneau',
+      region: 'Burgundy', venue: null, foodPairing: null, rating: 3, price: null,
+      currency: null, notes: null, tastedAt: '2026-07-29', createdAt: '2026-07-29T12:00:00.000Z'
+    }
+  ];
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ source: 'external' })).map((t) => t.id), ['t-1']);
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ minRating: 4 })).map((t) => t.id), ['t-1']);
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ venue: 'osteria' })).map((t) => t.id), ['t-1']);
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ query: 'raveneau' })).map((t) => t.id), ['t-2']);
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ limit: 1, offset: 1 })).map((t) => t.id), ['t-2']);
+});
+
+test('filterWines matches name, producer, region, varietal, and country case-insensitively', () => {
+  const wines = [
+    wineFixture({ id: 'w-1', name: 'Barolo', producer: 'Conterno', region: 'Piedmont', varietal: 'Nebbiolo', country: 'Italy' }),
+    wineFixture({ id: 'w-2', name: 'Chablis', producer: 'Raveneau', region: 'Burgundy', varietal: 'Chardonnay', country: 'France' })
+  ];
+  assert.deepEqual(filterWines(wines, 'nebbiolo').map((w) => w.id), ['w-1']);
+  assert.deepEqual(filterWines(wines, 'FRANCE').map((w) => w.id), ['w-2']);
+  assert.equal(filterWines(wines, '').length, 2);
+  assert.equal(filterWines(wines, 'rioja').length, 0);
+});
+
+test('resolveWineByName resolves exact, surfaces ambiguity, and splits a trailing vintage', () => {
+  const wines = [
+    wineFixture({ id: 'w-1', name: 'Barolo', vintage: 2016, quantity: 0 }),
+    wineFixture({ id: 'w-2', name: 'Barolo', vintage: 2019, quantity: 1 }),
+    wineFixture({ id: 'w-3', name: 'Chablis', vintage: 2020, quantity: 1 })
+  ];
+
+  const exact = resolveWineByName(wines, 'chablis');
+  assert.equal(exact.status, 'resolved');
+  assert.equal(exact.status === 'resolved' && exact.wine.id, 'w-3');
+
+  const ambiguous = resolveWineByName(wines, 'Barolo');
+  assert.equal(ambiguous.status, 'ambiguous');
+  // In-stock bottle ranks ahead of the consumed-out one.
+  assert.deepEqual(ambiguous.status === 'ambiguous' && ambiguous.candidates.map((w) => w.id), ['w-2', 'w-1']);
+
+  const byVintage = resolveWineByName(wines, 'Barolo 2016');
+  assert.equal(byVintage.status, 'resolved');
+  assert.equal(byVintage.status === 'resolved' && byVintage.wine.id, 'w-1');
+
+  const fuzzy = resolveWineByName(wines, 'raveneau chab');
+  assert.equal(fuzzy.status, 'none');
+
+  const partial = resolveWineByName(wines, 'chab');
+  assert.equal(partial.status, 'resolved');
+  assert.equal(partial.status === 'resolved' && partial.matchKind, 'single_candidate');
+
+  assert.equal(resolveWineByName(wines, '').status, 'none');
+  assert.equal(resolveWineByName(wines, 'Rioja 2015').status, 'none');
 });
