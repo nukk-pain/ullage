@@ -63,7 +63,11 @@ Verify the install by calling `cellar_summary`.
 - Record **tasting notes any time** with `add_note` (no need to open a bottle) and review them
   with `list_notes`; show the cellar's change history with `list_activity`.
 - Use `hold_wine`, `release_hold`, and `list_holds` for bottles that should not be opened yet.
-  Do not call `consume_wine` on held wine unless the user explicitly confirms releasing the hold first.
+  For aging holds ("keep the Barolo until 2030") pass `until` (YYYY-MM-DD); calling `hold_wine`
+  again on a held wine updates its date. Do not call `consume_wine` on held wine unless the user
+  explicitly confirms releasing the hold first.
+- When the user opened a bottle earlier ("we drank it yesterday"), pass `consumedAt` (YYYY-MM-DD)
+  to `consume_wine` so the history carries the real date.
 - When the user names a wine ("the Barolo", "Chablis 2020"), call `resolve_wine` first; on an
   `ambiguous` result, ask the user to pick a candidate before any write.
 - When the user drank a wine **outside the cellar** (restaurant, bar, a friend's bottle), record

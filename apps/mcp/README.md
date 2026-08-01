@@ -7,13 +7,15 @@ On first use it opens the SQLite default adapter at `~/.ullage/cellar.db` (overr
 `ULLAGE_DB`; set `ULLAGE_BACKEND=sqlite` explicitly if you want to pin the adapter). The agent
 uses its own LLM (including vision for labels/receipts) and calls these tools:
 
-- `cellar_summary` — counts + recent wines (call first)
-- `list_wines` — full cellar, with optional `query` search
+- `cellar_summary` — in-stock counts + recent wines (call first)
+- `list_wines` — full cellar, with optional `query` search and `inStock` filter
 - `resolve_wine` — natural-language name → one wine, candidates to disambiguate, or none
 - `add_wine` — `{ name, producer?, vintage?, quantity?, idempotencyKey }`
-- `import_label_photo_wines` / `import_receipt_wines` — atomic confirmed batch saves
-- `hold_wine`, `release_hold`, `list_holds` — protect bottles that should not be opened yet
-- `consume_wine` — `{ id, quantity?, rating?, notes?, idempotencyKey }`
+- `import_label_photo_wines` / `import_receipt_wines` — atomic confirmed batch saves, with
+  batch-level `purchaseDate` and `receiptImageUrl`
+- `hold_wine`, `release_hold`, `list_holds` — protect bottles that should not be opened yet;
+  aging holds carry an `until` date and re-holding updates it
+- `consume_wine` — `{ id, quantity?, rating?, notes?, consumedAt?, idempotencyKey }`
 - `update_consumption` — fix the rating/notes on a past pour
 - `record_tasting` / `list_tastings` — wines drunk outside the cellar (restaurant, bar) plus a
   unified drink history across cellar pours and outside tastings
