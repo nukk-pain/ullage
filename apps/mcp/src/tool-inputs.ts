@@ -1,4 +1,4 @@
-import type { AddWineInput, BatchImportInput, ConsumeInput, HoldInput, RecommendationInput, ReleaseHoldInput, WriteOptions } from '@ullage/domain';
+import type { AddWineInput, BatchImportInput, ConsumeInput, HoldInput, RecommendationInput, RecordTastingInput, ReleaseHoldInput, TastingQuery, UpdateConsumptionInput, WriteOptions } from '@ullage/domain';
 
 export const wineProps = {
   name: { type: 'string', description: 'Wine name without the year, e.g. "Barolo"' },
@@ -72,6 +72,54 @@ export function recommendationInput(args: Record<string, unknown>): Recommendati
   if ('occasion' in args) input.occasion = args.occasion;
   if ('limit' in args) input.limit = args.limit;
   if ('includeHeld' in args) input.includeHeld = args.includeHeld;
+  return input;
+}
+
+export const tastingProps = {
+  name: { type: 'string', description: 'Wine name without the year, e.g. "Barolo"' },
+  tastedAt: { type: 'string', description: 'YYYY-MM-DD — when it was tasted' },
+  vintage: { type: 'integer', description: 'Vintage year, e.g. 2016' },
+  producer: { type: 'string' },
+  region: { type: 'string' },
+  venue: { type: 'string', description: 'Where it was tasted, e.g. restaurant or bar name' },
+  foodPairing: { type: 'array', items: { type: 'string' }, description: 'Dishes it was paired with' },
+  rating: { type: 'number' },
+  price: { type: 'number', description: 'Price paid, e.g. per glass or bottle' },
+  currency: { type: 'string', description: 'ISO currency code for price, e.g. "EUR"' },
+  notes: { type: 'string' }
+} satisfies Record<string, Record<string, unknown>>;
+
+export function recordTastingInput(args: Record<string, unknown>): RecordTastingInput {
+  const input: RecordTastingInput = { name: args.name, tastedAt: args.tastedAt };
+  if ('vintage' in args) input.vintage = args.vintage;
+  if ('producer' in args) input.producer = args.producer;
+  if ('region' in args) input.region = args.region;
+  if ('venue' in args) input.venue = args.venue;
+  if ('foodPairing' in args) input.foodPairing = args.foodPairing;
+  if ('rating' in args) input.rating = args.rating;
+  if ('price' in args) input.price = args.price;
+  if ('currency' in args) input.currency = args.currency;
+  if ('notes' in args) input.notes = args.notes;
+  return input;
+}
+
+export function tastingQueryInput(args: Record<string, unknown>): TastingQuery {
+  const input: TastingQuery = {};
+  if ('source' in args) input.source = args.source;
+  if ('query' in args) input.query = args.query;
+  if ('minRating' in args) input.minRating = args.minRating;
+  if ('venue' in args) input.venue = args.venue;
+  if ('limit' in args) input.limit = args.limit;
+  if ('offset' in args) input.offset = args.offset;
+  return input;
+}
+
+export function updateConsumptionInput(args: Record<string, unknown>): UpdateConsumptionInput {
+  const input: UpdateConsumptionInput = {};
+  if ('rating' in args) input.rating = args.rating;
+  if ('notes' in args) input.notes = args.notes;
+  if ('clearRating' in args) input.clearRating = args.clearRating;
+  if ('clearNotes' in args) input.clearNotes = args.clearNotes;
   return input;
 }
 

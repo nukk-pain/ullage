@@ -235,7 +235,30 @@ test('OpenClawHttpCellarStore rejects methods unsupported by the OpenClaw backen
     await assert.rejects(async () => store.releaseHold('wine-1', { idempotencyKey: 'release-key-1' }), /unsupported-by-openclaw-backend/);
     await assert.rejects(async () => store.listHolds(), /unsupported-by-openclaw-backend/);
     await assert.rejects(async () => store.recommendWines({ occasion: 'dinner' }), /unsupported-by-openclaw-backend/);
+    await assert.rejects(async () => store.recordTasting({ name: 'Barolo', tastedAt: '2026-07-30' }, { idempotencyKey: 'tasting-key-1' }), /unsupported-by-openclaw-backend/);
+    await assert.rejects(async () => store.listTastings(), /unsupported-by-openclaw-backend/);
+    await assert.rejects(async () => store.updateConsumption('event-1', { rating: 4 }, { idempotencyKey: 'fix-key-1' }), /unsupported-by-openclaw-backend/);
     assert.equal(server.requests.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test('OpenClawHttpCellarStore supports listWines query filter and resolveWine over the wines endpoint', async () => {
+  const server = await startFakeOpenClawServer(() => ({ status: 200, body: { wines: [serviceWine] } }));
+  try {
+    const store = new OpenClawHttpCellarStore(server.baseUrl);
+
+    const searched = await store.listWines('raveneau');
+    assert.deepEqual(searched, [mappedWine]);
+    assert.deepEqual(await store.listWines('rioja'), []);
+
+    const resolved = await store.resolveWine('chablis');
+    assert.equal(resolved.status, 'resolved');
+    assert.equal(resolved.status === 'resolved' && resolved.wine.id, mappedWine.id);
+
+    const missing = await store.resolveWine('rioja');
+    assert.equal(missing.status, 'none');
   } finally {
     await server.close();
   }

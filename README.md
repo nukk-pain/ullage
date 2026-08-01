@@ -4,7 +4,8 @@ Your wine cellar, run by your AI agent — OpenClaw, Hermes, or any MCP client.
 
 ## What it does
 
-- Chat with your agent to manage your cellar: add, list, update, consume (rating + notes), hold, release, recommend, export.
+- Chat with your agent to manage your cellar: add, list, search, update, consume (rating + notes), hold, release, recommend, export.
+- **Drank something outside the cellar?** A glass at a restaurant or a friend's bottle is recorded as a tasting — inventory untouched — and shows up in one unified drink history with your cellar pours.
 - Share a wine **label or receipt photo** — your agent reads it and saves confirmed wines in one batch. ullage runs no OCR; your agent's own vision does it.
 - **Idempotent confirmed writes** — repeated chat/button actions can use the same idempotency key without creating duplicates.
 - **Hold protection** — mark bottles that should not be opened yet; ordinary consumption and recommendations respect the hold.
@@ -28,6 +29,7 @@ Then just talk:
 - *"Add a Barolo 2016."* — or share a **wine label photo**; it reads the label and adds the bottle.
 - Share a **receipt photo** — it confirms the wine rows, saves all of them atomically, captures price / purchase date / store, and skips non-wine items.
 - *"I drank the Chablis tonight — 2/5, too light."* — logged with your rating and note.
+- *"Had a great Brunello at the steakhouse — 4.5."* — recorded as an outside tasting; your cellar stays untouched.
 - *"Hold the Barolo for our anniversary."* — marked so it will not be opened accidentally.
 - *"What should I drink with fried chicken?"* — it recommends from your cellar.
 

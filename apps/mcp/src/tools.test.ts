@@ -11,7 +11,12 @@ import type {
   RecommendationInput,
   RecommendationResult,
   ReleaseHoldInput,
+  RecordTastingInput,
+  ResolveWineResult,
+  Tasting,
   TastingNote,
+  TastingQuery,
+  UpdateConsumptionInput,
   Wine,
   WineHold,
   WriteOptions
@@ -48,6 +53,24 @@ const sampleHold: WineHold = {
   releasedAt: null
 };
 
+const sampleTasting: Tasting = {
+  id: 'tasting-1',
+  source: 'external',
+  wineId: null,
+  wineName: 'Barolo',
+  vintage: 2016,
+  producer: null,
+  region: null,
+  venue: 'Osteria Roma',
+  foodPairing: ['bistecca'],
+  rating: 4.5,
+  price: 18,
+  currency: 'EUR',
+  notes: 'by the glass',
+  tastedAt: '2026-07-30',
+  createdAt: '2026-07-30T12:00:00.000Z'
+};
+
 class AsyncFakeStore implements CellarStore {
   readonly addedInputs: AddWineInput[] = [];
   readonly addedOptions: WriteOptions[] = [];
@@ -61,6 +84,10 @@ class AsyncFakeStore implements CellarStore {
   readonly consumptionFilters: Array<string | undefined> = [];
   readonly noteFilters: Array<string | undefined> = [];
   readonly activityLimits: number[] = [];
+  readonly resolveQueries: string[] = [];
+  readonly consumptionUpdates: Array<{ readonly eventId: string; readonly input: UpdateConsumptionInput; readonly options: WriteOptions }> = [];
+  readonly tastingInputs: Array<{ readonly input: RecordTastingInput; readonly options: WriteOptions }> = [];
+  readonly tastingQueries: TastingQuery[] = [];
 
   async addWine(input: AddWineInput, options: WriteOptions = {}): Promise<Wine> {
     this.addedInputs.push(input);
@@ -135,7 +162,27 @@ class AsyncFakeStore implements CellarStore {
   }
 
   async exportJson(): Promise<CellarExport> {
-    return { wines: [sampleWine], consumptions: [], notes: [], activity: [], holds: [sampleHold], imports: [] };
+    return { wines: [sampleWine], consumptions: [], notes: [], activity: [], holds: [sampleHold], imports: [], tastings: [] };
+  }
+
+  async resolveWine(query: string): Promise<ResolveWineResult> {
+    this.resolveQueries.push(query);
+    return { status: 'resolved', matchKind: 'exact', wine: sampleWine };
+  }
+
+  async updateConsumption(eventId: string, input: UpdateConsumptionInput, options: WriteOptions = {}): Promise<ConsumptionEvent> {
+    this.consumptionUpdates.push({ eventId, input, options });
+    return { id: eventId, wineId: sampleWine.id, quantity: 1, rating: 4, notes: 'fixed', consumedAt: sampleWine.updatedAt };
+  }
+
+  async recordTasting(input: RecordTastingInput, options: WriteOptions = {}): Promise<Tasting> {
+    this.tastingInputs.push({ input, options });
+    return sampleTasting;
+  }
+
+  async listTastings(query: TastingQuery = {}): Promise<Tasting[]> {
+    this.tastingQueries.push(query);
+    return [sampleTasting];
   }
 
   async close(): Promise<void> {}
@@ -147,10 +194,14 @@ test('createUllageTools exposes the existing MCP tool names in order', () => {
     'cellar_summary',
     'list_wines',
     'get_wine',
+    'resolve_wine',
     'add_wine',
     'update_wine',
     'consume_wine',
     'list_consumptions',
+    'update_consumption',
+    'record_tasting',
+    'list_tastings',
     'add_note',
     'list_notes',
     'list_activity',
@@ -162,6 +213,43 @@ test('createUllageTools exposes the existing MCP tool names in order', () => {
     'list_holds',
     'recommend_wines'
   ]);
+});
+
+test('resolve_wine, update_consumption, record_tasting, and list_tastings delegate to the store', async () => {
+  const store = new AsyncFakeStore();
+  const tools = createUllageTools(store);
+
+  const resolved = await tool(tools, 'resolve_wine').handler({ query: 'the Barolo' });
+  assert.deepEqual(store.resolveQueries, ['the Barolo']);
+  assert.deepEqual(resolved, { status: 'resolved', matchKind: 'exact', wine: sampleWine });
+
+  const updated = await tool(tools, 'update_consumption').handler({ eventId: 'consume-1', rating: 4, clearNotes: true, idempotencyKey: 'fix-1' });
+  assert.equal(store.consumptionUpdates.length, 1);
+  assert.deepEqual(store.consumptionUpdates[0], {
+    eventId: 'consume-1',
+    input: { rating: 4, clearNotes: true },
+    options: { idempotencyKey: 'fix-1' }
+  });
+  assert.equal((updated as ConsumptionEvent).notes, 'fixed');
+
+  await tool(tools, 'record_tasting').handler({
+    name: 'Barolo', tastedAt: '2026-07-30', venue: 'Osteria Roma', rating: 4.5, foodPairing: ['bistecca'], idempotencyKey: 'tasting-1'
+  });
+  assert.equal(store.tastingInputs.length, 1);
+  assert.deepEqual(store.tastingInputs[0].input, {
+    name: 'Barolo', tastedAt: '2026-07-30', venue: 'Osteria Roma', rating: 4.5, foodPairing: ['bistecca']
+  });
+  assert.deepEqual(store.tastingInputs[0].options, { idempotencyKey: 'tasting-1' });
+
+  const timeline = await tool(tools, 'list_tastings').handler({ source: 'external', minRating: 4 });
+  assert.deepEqual(store.tastingQueries, [{ source: 'external', minRating: 4 }]);
+  assert.deepEqual(timeline, [sampleTasting]);
+
+  const searched = await tool(tools, 'list_wines').handler({ query: 'chablis' });
+  assert.deepEqual(searched, [sampleWine]);
+
+  await assert.rejects(async () => tool(tools, 'update_consumption').handler({ eventId: 'consume-1', rating: 4 }), /idempotencyKey is required/);
+  await assert.rejects(async () => tool(tools, 'record_tasting').handler({ name: 'Barolo', tastedAt: '2026-07-30' }), /idempotencyKey is required/);
 });
 
 test('createUllageTools handlers await an injected store and preserve output shapes', async () => {
@@ -219,7 +307,7 @@ test('createUllageTools handlers await an injected store and preserve output sha
   assert.deepEqual(store.activityLimits, [3]);
 
   const exported = await tool(tools, 'export_cellar').handler({});
-  assert.deepEqual(exported, { wines: [sampleWine], consumptions: [], notes: [], activity: [], holds: [sampleHold], imports: [] });
+  assert.deepEqual(exported, { wines: [sampleWine], consumptions: [], notes: [], activity: [], holds: [sampleHold], imports: [], tastings: [] });
 });
 
 test('createUllageTools requires idempotencyKey for confirmed write tools', async () => {

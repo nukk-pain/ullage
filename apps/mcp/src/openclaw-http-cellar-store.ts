@@ -1,8 +1,10 @@
 import {
+  filterWines,
   normalizeAddWine,
   normalizeQuantity,
   optionalNumber,
   optionalString,
+  resolveWineByName,
   type AddWineInput,
   type BatchImportInput,
   type BatchImportResult,
@@ -12,6 +14,11 @@ import {
   type RecommendationInput,
   type RecommendationResult,
   type ReleaseHoldInput,
+  type RecordTastingInput,
+  type ResolveWineResult,
+  type Tasting,
+  type TastingQuery,
+  type UpdateConsumptionInput,
   type Wine,
   type WineHold,
   type WriteOptions
@@ -65,9 +72,9 @@ export class OpenClawHttpCellarStore implements CellarStore {
     });
   }
 
-  async listWines(): Promise<Wine[]> {
+  async listWines(query?: string): Promise<Wine[]> {
     const response = await this.request('GET', '/wines');
-    return wineListFromJson(response.body);
+    return filterWines(wineListFromJson(response.body), query);
   }
 
   async getWine(id: string): Promise<Wine | undefined> {
@@ -75,8 +82,24 @@ export class OpenClawHttpCellarStore implements CellarStore {
     return response.status === 404 ? undefined : wineFromJson(response.body);
   }
 
+  async resolveWine(query: string): Promise<ResolveWineResult> {
+    return resolveWineByName(await this.listWines(), query);
+  }
+
   async importWines(_input: BatchImportInput): Promise<BatchImportResult> {
     throw new UnsupportedOpenClawOperationError('importWines');
+  }
+
+  async updateConsumption(_eventId: string, _input: UpdateConsumptionInput, _options: WriteOptions = {}): Promise<ConsumptionEvent> {
+    throw new UnsupportedOpenClawOperationError('updateConsumption');
+  }
+
+  async recordTasting(_input: RecordTastingInput, _options: WriteOptions = {}): Promise<Tasting> {
+    throw new UnsupportedOpenClawOperationError('recordTasting');
+  }
+
+  async listTastings(_query?: TastingQuery): Promise<Tasting[]> {
+    throw new UnsupportedOpenClawOperationError('listTastings');
   }
 
   async updateWine(_id: string, _input: Partial<AddWineInput>, _options: WriteOptions = {}): Promise<Wine | undefined> {

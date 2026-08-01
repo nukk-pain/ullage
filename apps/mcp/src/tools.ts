@@ -10,9 +10,13 @@ import {
   numberArg,
   optionalId,
   recommendationInput,
+  recordTastingInput,
   releaseHoldInput,
   requiredWriteOptions,
   stringArg,
+  tastingProps,
+  tastingQueryInput,
+  updateConsumptionInput,
   updateWineInput,
   wineProps
 } from './tool-inputs.js';
@@ -27,9 +31,9 @@ export function createUllageTools(store: CellarStore): McpTool[] {
     },
     {
       name: 'list_wines',
-      description: 'List every wine in the cellar with all fields (id, name, producer, vintage, region, varietal, quantity, rating, drink-by, etc.).',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      handler: async () => store.listWines()
+      description: 'List every wine in the cellar with all fields (id, name, producer, vintage, region, varietal, quantity, rating, drink-by, etc.). Pass `query` to search by name, producer, region, varietal, or country.',
+      inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Case-insensitive substring search' } }, additionalProperties: false },
+      handler: async (args) => store.listWines(optionalId(args.query))
     },
     {
       name: 'get_wine',
@@ -41,6 +45,12 @@ export function createUllageTools(store: CellarStore): McpTool[] {
         if (!wine) throw new Error(`No wine with id ${id}`);
         return wine;
       }
+    },
+    {
+      name: 'resolve_wine',
+      description: 'Resolve what the user called a wine ("the Barolo", "Chablis 2020") to one cellar wine. Returns status resolved (use the wine id), ambiguous (ask the user to pick a candidate), or none. Call this before consume_wine or hold_wine when you only have a name.',
+      inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'The wine as the user said it' } }, required: ['query'], additionalProperties: false },
+      handler: async (args) => store.resolveWine(stringArg(args, 'query'))
     },
     {
       name: 'add_wine',
@@ -86,6 +96,52 @@ export function createUllageTools(store: CellarStore): McpTool[] {
       description: 'List consumption history (when bottles were opened, with ratings/notes). Optionally filter by wine id.',
       inputSchema: { type: 'object', properties: { wineId: { type: 'string' } }, additionalProperties: false },
       handler: async (args) => store.listConsumptions(optionalId(args.wineId))
+    },
+    {
+      name: 'update_consumption',
+      description: 'Fix the rating or notes on a past consumption event (id from list_consumptions). Only the fields you pass change; set clearRating/clearNotes to true to erase a stored value.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          eventId: { type: 'string', description: 'Consumption event id from list_consumptions' },
+          rating: { type: 'number' },
+          notes: { type: 'string' },
+          clearRating: { type: 'boolean' },
+          clearNotes: { type: 'boolean' },
+          ...idempotencyProp
+        },
+        required: ['eventId', 'idempotencyKey'],
+        additionalProperties: false
+      },
+      handler: async (args) => store.updateConsumption(stringArg(args, 'eventId'), updateConsumptionInput(args), requiredWriteOptions(args))
+    },
+    {
+      name: 'record_tasting',
+      description: 'Record a wine tasted OUTSIDE the cellar (restaurant, bar, a friend\'s bottle) — never touches inventory. For a bottle opened from the cellar use consume_wine instead. Capture venue, rating, food pairing, and price when known.',
+      inputSchema: {
+        type: 'object',
+        properties: { ...tastingProps, ...idempotencyProp },
+        required: ['name', 'tastedAt', 'idempotencyKey'],
+        additionalProperties: false
+      },
+      handler: async (args) => store.recordTasting(recordTastingInput(args), requiredWriteOptions(args))
+    },
+    {
+      name: 'list_tastings',
+      description: 'Unified timeline of every wine actually drunk: cellar pours (source "cellar") plus outside tastings (source "external"), newest first. Filter by source, text query, minRating, or venue.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          source: { type: 'string', enum: ['cellar', 'external'] },
+          query: { type: 'string', description: 'Case-insensitive search over wine, producer, region, venue, notes' },
+          minRating: { type: 'number' },
+          venue: { type: 'string' },
+          limit: { type: 'integer', minimum: 1 },
+          offset: { type: 'integer', minimum: 0 }
+        },
+        additionalProperties: false
+      },
+      handler: async (args) => store.listTastings(tastingQueryInput(args))
     },
     {
       name: 'add_note',
