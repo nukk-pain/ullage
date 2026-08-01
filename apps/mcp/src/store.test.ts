@@ -218,3 +218,104 @@ test('append-only mode still allows tasting records and pour-metadata fixes', ()
   const tasting = store.recordTasting({ name: 'Chablis', tastedAt: '2026-07-30' }, { idempotencyKey: 'ao-tasting-1' });
   assert.equal(tasting.wineName, 'Chablis');
 });
+
+test('consume_wine accepts consumedAt as a bare date or ISO timestamp, rejects garbage', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const wine = store.addWine({ name: 'Barolo', quantity: 3 });
+
+  store.consumeWine(wine.id, { quantity: 1, consumedAt: '2026-07-30' });
+  store.consumeWine(wine.id, { quantity: 1, consumedAt: '2026-07-29T20:15:00.000Z' });
+  store.consumeWine(wine.id, { quantity: 1 }); // defaults to now
+
+  const events = store.listConsumptions(wine.id);
+  assert.equal(events.length, 3);
+  const stamps = events.map((e) => e.consumedAt);
+  assert.equal(stamps.includes('2026-07-30T00:00:00.000Z'), true); // bare date expanded
+  assert.equal(stamps.includes('2026-07-29T20:15:00.000Z'), true);
+
+  const again = store.addWine({ name: 'Chablis', quantity: 1 });
+  assert.throws(() => store.consumeWine(again.id, { consumedAt: 'last tuesday' }), /consumedAt must be/);
+  assert.equal(store.getWine(again.id)?.quantity, 1); // failed consume left stock untouched
+});
+
+test('hold_wine stores an until date and re-holding updates instead of ignoring', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const wine = store.addWine({ name: 'Brunello', quantity: 1 });
+
+  const hold = store.holdWine(wine.id, { until: '2030-01-01', reason: 'aging', idempotencyKey: 'h-1' });
+  assert.equal(hold.until, '2030-01-01');
+  assert.equal(store.getWine(wine.id)?.hold?.until, '2030-01-01');
+  assert.equal(store.listHolds()[0]?.until, '2030-01-01');
+
+  // Extend the same hold: until changes, id stays.
+  const extended = store.holdWine(wine.id, { until: '2032-01-01', idempotencyKey: 'h-2' });
+  assert.equal(extended.id, hold.id);
+  assert.equal(extended.until, '2032-01-01');
+  assert.equal(extended.reason, 'aging'); // omitted reason preserved
+
+  // Identical re-hold is a no-op returning the current hold.
+  const same = store.holdWine(wine.id, { until: '2032-01-01', idempotencyKey: 'h-3' });
+  assert.equal(same.id, hold.id);
+  assert.equal(same.until, '2032-01-01');
+});
+
+test('schema upgrade adds wine_holds.until to a DB created before the column existed', async () => {
+  const { unlink } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { randomUUID } = await import('node:crypto');
+  const { default: Database } = await import('better-sqlite3');
+  const dbPath = join(tmpdir(), `ullage-hold-migration-${randomUUID()}.db`);
+
+  // Build an old-shape wine_holds table by hand.
+  const raw = new Database(dbPath);
+  raw.exec(`CREATE TABLE wine_holds (
+    id TEXT PRIMARY KEY, wine_id TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, released_at TEXT
+  );`);
+  raw.prepare('INSERT INTO wine_holds VALUES (?, ?, ?, ?, ?)').run('h-old', 'w-1', 'legacy hold', '2026-01-01T00:00:00.000Z', null);
+  raw.close();
+
+  const store = new SqliteCellarStore(dbPath);
+  const holds = store.listHolds();
+  assert.equal(holds.length, 1);
+  assert.equal(holds[0]?.until, null); // legacy rows read back with null until
+  store.close();
+  await unlink(dbPath);
+});
+
+test('list_wines inStock filter and summary in-stock counts', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const gone = store.addWine({ name: 'Champagne', quantity: 1 });
+  store.consumeWine(gone.id, { quantity: 1 });
+  store.addWine({ name: 'Barolo', quantity: 2 });
+
+  assert.deepEqual(store.listWines(undefined, true).map((w) => w.name), ['Barolo']);
+  assert.deepEqual(store.listWines(undefined, false).map((w) => w.name), ['Champagne']);
+  assert.equal(store.listWines().length, 2);
+
+  const summary = store.summary();
+  assert.equal(summary.wine_count, 1); // in-stock only
+  assert.equal(summary.bottle_count, 2);
+  assert.equal(summary.consumed_out_count, 1);
+  assert.deepEqual(summary.recent_wines.map((w) => w.name), ['Barolo']); // drunk-out wine not "recent"
+});
+
+test('import batch-level purchaseDate fills items and lands on the import record', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const result = store.importWines({
+    idempotencyKey: 'batch-meta-1',
+    source: 'receipt',
+    purchaseDate: '2026-07-15',
+    receiptImageUrl: 'https://example.com/receipt.jpg',
+    items: [
+      { name: 'Barolo', itemKey: 'l1' },
+      { name: 'Chablis', purchaseDate: '2026-07-01', itemKey: 'l2' } // own date wins
+    ]
+  });
+  assert.equal(result.purchaseDate, '2026-07-15');
+  assert.equal(result.receiptImageUrl, 'https://example.com/receipt.jpg');
+  const byName = new Map(result.wines.map((w) => [w.name, w]));
+  assert.equal(byName.get('Barolo')?.purchaseDate, '2026-07-15'); // filled down
+  assert.equal(byName.get('Chablis')?.purchaseDate, '2026-07-01'); // not overridden
+  assert.equal(store.exportJson().imports[0]?.receiptImageUrl, 'https://example.com/receipt.jpg');
+});

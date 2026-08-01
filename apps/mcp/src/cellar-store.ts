@@ -23,9 +23,10 @@ import type {
 export type Awaitable<T> = T | Promise<T>;
 
 export type CellarSummary = {
-  readonly wine_count: number;
+  readonly wine_count: number; // wines with bottles remaining
   readonly bottle_count: number;
-  readonly recent_wines: readonly { readonly id: string; readonly name: string; readonly quantity: number }[];
+  readonly consumed_out_count: number; // wines drunk to zero, kept for history
+  readonly recent_wines: readonly { readonly id: string; readonly name: string; readonly quantity: number; readonly hold: WineHold | null }[];
 };
 
 export type CellarExport = {
@@ -41,7 +42,7 @@ export type CellarExport = {
 export interface CellarStore {
   addWine(input: AddWineInput, options?: WriteOptions): Awaitable<Wine>;
   importWines(input: BatchImportInput): Awaitable<BatchImportResult>;
-  listWines(query?: string): Awaitable<Wine[]>;
+  listWines(query?: string, inStock?: boolean): Awaitable<Wine[]>;
   getWine(id: string): Awaitable<Wine | undefined>;
   resolveWine(query: string): Awaitable<ResolveWineResult>;
   updateWine(id: string, input: Partial<AddWineInput>, options?: WriteOptions): Awaitable<Wine | undefined>;

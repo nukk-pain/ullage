@@ -26,6 +26,8 @@ export function importSchema(source: 'receipt' | 'label_photo'): Record<string, 
     properties: {
       ...idempotencyProp,
       sourceId: { type: 'string' },
+      purchaseDate: { type: 'string', description: 'YYYY-MM-DD for the whole batch; items without their own purchaseDate inherit it' },
+      receiptImageUrl: { type: 'string', description: 'Reference to the source receipt/label image, if stored anywhere' },
       items: { type: 'array', minItems: 1, items: { type: 'object', properties: importItemProps, required: ['name'], additionalProperties: false } }
     },
     required: ['idempotencyKey', 'items'],
@@ -47,6 +49,7 @@ export function consumeInput(args: Record<string, unknown>): ConsumeInput {
   if ('quantity' in args) input.quantity = args.quantity;
   if ('rating' in args) input.rating = args.rating;
   if ('notes' in args) input.notes = args.notes;
+  if ('consumedAt' in args) input.consumedAt = args.consumedAt;
   return input;
 }
 
@@ -55,12 +58,14 @@ export function batchImportInput(args: Record<string, unknown>, source: 'receipt
     idempotencyKey: args.idempotencyKey,
     source,
     sourceId: args.sourceId,
+    purchaseDate: args.purchaseDate,
+    receiptImageUrl: args.receiptImageUrl,
     items: Array.isArray(args.items) ? args.items.map(importItemInput) : []
   };
 }
 
 export function holdInput(args: Record<string, unknown>): HoldInput {
-  return { reason: args.reason, ...requiredWriteOptions(args) };
+  return { reason: args.reason, until: args.until, ...requiredWriteOptions(args) };
 }
 
 export function releaseHoldInput(args: Record<string, unknown>): ReleaseHoldInput {

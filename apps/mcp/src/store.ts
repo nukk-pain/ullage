@@ -29,9 +29,11 @@ import {
   normalizeQuantity,
   normalizeRecordTasting,
   normalizeTastingQuery,
+  optionalDate,
   optionalInt,
   optionalNumber,
   optionalString,
+  optionalTimestamp,
   requireText,
   resolveWineByName,
   type ActivityAction, type ActivityEvent, type AddWineInput, type BatchImportInput,
@@ -68,7 +70,11 @@ export class SqliteCellarStore implements CellarStore {
         const { itemKey: _itemKey, ...fields } = item;
         return this.insertWine(fields, 'batch_add', now);
       });
-      const result: BatchImportResult = { id: randomUUID(), source: normalized.source, sourceId: normalized.sourceId, wines, createdAt: now };
+      const result: BatchImportResult = {
+        id: randomUUID(), source: normalized.source, sourceId: normalized.sourceId,
+        purchaseDate: normalized.purchaseDate, receiptImageUrl: normalized.receiptImageUrl,
+        wines, createdAt: now
+      };
       this.db.prepare('INSERT INTO batch_imports (id, source, source_id, result_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
         result.id,
         result.source,
@@ -81,9 +87,11 @@ export class SqliteCellarStore implements CellarStore {
     });
   }
 
-  listWines(query?: string): Wine[] {
+  listWines(query?: string, inStock?: boolean): Wine[] {
     const wines = (this.db.prepare(`${wineSelectSql()} ORDER BY w.created_at DESC`).all() as WineJoinRow[]).map(rowToWine);
-    return filterWines(wines, query);
+    const filtered = filterWines(wines, query);
+    if (inStock === undefined) return filtered;
+    return filtered.filter((wine) => (inStock ? wine.quantity > 0 : wine.quantity === 0));
   }
 
   getWine(id: string): Wine | undefined {
@@ -131,10 +139,11 @@ export class SqliteCellarStore implements CellarStore {
       const rating = optionalNumber(input.rating);
       const notes = optionalString(input.notes);
       const now = new Date().toISOString();
+      const consumedAt = optionalTimestamp(input.consumedAt, 'consumedAt') ?? now;
       this.db.prepare('UPDATE wines SET quantity=?, updated_at=? WHERE id=?').run(existing.quantity - consumed, now, id);
       this.db
         .prepare('INSERT INTO consumption_events (id, wine_id, quantity, rating, notes, consumed_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(randomUUID(), id, consumed, rating, notes, now);
+        .run(randomUUID(), id, consumed, rating, notes, consumedAt);
       this.logActivity('consume', id, `Opened ${consumed} of ${describe(existing)}${rating !== null ? ` (${rating})` : ''}`);
       return this.getWine(id);
     });
@@ -219,13 +228,22 @@ export class SqliteCellarStore implements CellarStore {
   }
 
   holdWine(id: string, input: HoldInput): WineHold {
-    return this.idempotent('holdWine', input.idempotencyKey, { id, reason: input.reason }, () => {
+    return this.idempotent('holdWine', input.idempotencyKey, { id, reason: input.reason, until: input.until }, () => {
       const wine = this.getWine(id);
       if (!wine) throw new Error(`No wine with id ${id}`);
-      if (wine.hold) return wine.hold;
-      const hold: WineHold = { id: randomUUID(), wineId: id, reason: optionalString(input.reason), createdAt: new Date().toISOString(), releasedAt: null };
-      this.db.prepare('INSERT INTO wine_holds (id, wine_id, reason, created_at, released_at) VALUES (?, ?, ?, ?, ?)').run(hold.id, hold.wineId, hold.reason, hold.createdAt, hold.releasedAt);
-      this.logActivity('hold', id, `Held ${describe(wine)}${hold.reason ? `: ${hold.reason}` : ''}`);
+      const reason = optionalString(input.reason);
+      const until = optionalDate(input.until);
+      if (wine.hold) {
+        // Re-holding an already-held wine extends/updates it instead of silently ignoring the call.
+        if (until === wine.hold.until && (reason === null || reason === wine.hold.reason)) return wine.hold;
+        const updated: WineHold = { ...wine.hold, reason: reason ?? wine.hold.reason, until };
+        this.db.prepare('UPDATE wine_holds SET reason = ?, until = ? WHERE id = ?').run(updated.reason, updated.until, updated.id);
+        this.logActivity('hold', id, `Updated hold on ${describe(wine)}${updated.until ? ` until ${updated.until}` : ''}${updated.reason ? `: ${updated.reason}` : ''}`);
+        return updated;
+      }
+      const hold: WineHold = { id: randomUUID(), wineId: id, reason, until, createdAt: new Date().toISOString(), releasedAt: null };
+      this.db.prepare('INSERT INTO wine_holds (id, wine_id, reason, until, created_at, released_at) VALUES (?, ?, ?, ?, ?, ?)').run(hold.id, hold.wineId, hold.reason, hold.until, hold.createdAt, hold.releasedAt);
+      this.logActivity('hold', id, `Held ${describe(wine)}${hold.until ? ` until ${hold.until}` : ''}${hold.reason ? `: ${hold.reason}` : ''}`);
       return hold;
     });
   }
@@ -266,10 +284,12 @@ export class SqliteCellarStore implements CellarStore {
 
   summary(): CellarSummary {
     const wines = this.listWines();
+    const inStock = wines.filter((wine) => wine.quantity > 0);
     return {
-      wine_count: wines.length,
-      bottle_count: wines.reduce((sum, wine) => sum + wine.quantity, 0),
-      recent_wines: wines.slice(0, 5).map((wine) => ({ id: wine.id, name: wine.name, quantity: wine.quantity, hold: wine.hold ?? null }))
+      wine_count: inStock.length,
+      bottle_count: inStock.reduce((sum, wine) => sum + wine.quantity, 0),
+      consumed_out_count: wines.length - inStock.length,
+      recent_wines: inStock.slice(0, 5).map((wine) => ({ id: wine.id, name: wine.name, quantity: wine.quantity, hold: wine.hold ?? null }))
     };
   }
 

@@ -19,7 +19,7 @@ export function initializeSqliteSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_notes_wine ON tasting_notes(wine_id, created_at);
     CREATE TABLE IF NOT EXISTS wine_holds (
-      id TEXT PRIMARY KEY, wine_id TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, released_at TEXT
+      id TEXT PRIMARY KEY, wine_id TEXT NOT NULL, reason TEXT, until TEXT, created_at TEXT NOT NULL, released_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_holds_active ON wine_holds(wine_id, released_at);
     CREATE TABLE IF NOT EXISTS batch_imports (
@@ -40,6 +40,14 @@ export function initializeSqliteSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_tastings_time ON tastings(tasted_at);
   `);
+  migrateSqliteSchema(db);
+}
+
+// Additive column migrations for databases created by older builds.
+// CREATE TABLE IF NOT EXISTS does not add columns to existing tables.
+function migrateSqliteSchema(db: Database.Database): void {
+  const holdColumns = (db.prepare('PRAGMA table_info(wine_holds)').all() as { name: string }[]).map((c) => c.name);
+  if (!holdColumns.includes('until')) db.exec('ALTER TABLE wine_holds ADD COLUMN until TEXT');
 }
 
 export function runIdempotent<T>(db: Database.Database, operation: string, key: string | undefined, payload: unknown, work: () => T): T {

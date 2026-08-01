@@ -31,9 +31,16 @@ export function createUllageTools(store: CellarStore): McpTool[] {
     },
     {
       name: 'list_wines',
-      description: 'List every wine in the cellar with all fields (id, name, producer, vintage, region, varietal, quantity, rating, drink-by, etc.). Pass `query` to search by name, producer, region, varietal, or country.',
-      inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Case-insensitive substring search' } }, additionalProperties: false },
-      handler: async (args) => store.listWines(optionalId(args.query))
+      description: 'List wines with full fields (id, name, producer, vintage, region, varietal, quantity, drink-by, hold, etc.). `query` searches name/producer/region/varietal/country. `inStock: true` returns only wines with bottles remaining; `false` only drunk-to-zero wines; omitted returns both.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Case-insensitive substring search over name, producer, region, varietal, country' },
+          inStock: { type: 'boolean', description: 'true = bottles remaining only, false = drunk-to-zero only' }
+        },
+        additionalProperties: false
+      },
+      handler: async (args) => store.listWines(optionalId(args.query), typeof args.inStock === 'boolean' ? args.inStock : undefined)
     },
     {
       name: 'get_wine',
@@ -71,7 +78,7 @@ export function createUllageTools(store: CellarStore): McpTool[] {
     },
     {
       name: 'consume_wine',
-      description: 'Open/consume bottles of a wine by id: decrement quantity, record a rating and notes, and log a consumption event.',
+      description: 'Open/consume bottles of a wine by id: decrement quantity, record a rating and notes, and log a consumption event. Pass consumedAt when the bottle was opened earlier ("we drank it yesterday").',
       inputSchema: {
         type: 'object',
         properties: {
@@ -79,6 +86,7 @@ export function createUllageTools(store: CellarStore): McpTool[] {
           quantity: { type: 'integer', minimum: 1, description: 'Bottles opened (default 1)' },
           rating: { type: 'number' },
           notes: { type: 'string' },
+          consumedAt: { type: 'string', description: 'YYYY-MM-DD or ISO8601 — when it was opened (default: now)' },
           ...idempotencyProp
         },
         required: ['id', 'idempotencyKey'],
@@ -191,8 +199,18 @@ export function createUllageTools(store: CellarStore): McpTool[] {
     },
     {
       name: 'hold_wine',
-      description: 'Mark a wine as held so ordinary recommendations and consume_wine will not open it accidentally.',
-      inputSchema: { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' }, ...idempotencyProp }, required: ['id', 'idempotencyKey'], additionalProperties: false },
+      description: 'Mark a wine as held so ordinary recommendations and consume_wine will not open it accidentally. Pass `until` (YYYY-MM-DD) for aging holds ("keep until 2030"); calling again on a held wine updates its until/reason.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          reason: { type: 'string' },
+          until: { type: 'string', description: 'YYYY-MM-DD the hold should last to (informational; never auto-released)' },
+          ...idempotencyProp
+        },
+        required: ['id', 'idempotencyKey'],
+        additionalProperties: false
+      },
       handler: async (args) => store.holdWine(stringArg(args, 'id'), holdInput(args))
     },
     {

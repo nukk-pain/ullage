@@ -6,12 +6,12 @@ export type WineJoinRow = {
   country: string | null; varietal: string | null; price: number | null; quantity: number;
   rating: number | null; notes: string | null; store: string | null; purchase_date: string | null;
   drink_by_date: string | null; location: string | null; created_at: string; updated_at: string;
-  hold_id: string | null; hold_reason: string | null; hold_created_at: string | null; hold_released_at: string | null;
+  hold_id: string | null; hold_reason: string | null; hold_until: string | null; hold_created_at: string | null; hold_released_at: string | null;
 };
 export type ConsumptionRow = { id: string; wine_id: string; quantity: number; rating: number | null; notes: string | null; consumed_at: string };
 export type NoteRow = { id: string; wine_id: string; note: string; rating: number | null; created_at: string };
 export type ActivityRow = { id: string; action: string; wine_id: string | null; summary: string; created_at: string };
-export type HoldRow = { id: string; wine_id: string; reason: string | null; created_at: string; released_at: string | null };
+export type HoldRow = { id: string; wine_id: string; reason: string | null; until: string | null; created_at: string; released_at: string | null };
 export type IdempotencyRow = { idempotency_key: string; operation: string; payload_hash: string; result_json: string; created_at: string };
 export type ImportRow = { result_json: string };
 export type TastingRow = {
@@ -21,7 +21,7 @@ export type TastingRow = {
 };
 
 export function wineSelectSql(): string {
-  return `SELECT w.*, h.id AS hold_id, h.reason AS hold_reason, h.created_at AS hold_created_at, h.released_at AS hold_released_at
+  return `SELECT w.*, h.id AS hold_id, h.reason AS hold_reason, h.until AS hold_until, h.created_at AS hold_created_at, h.released_at AS hold_released_at
     FROM wines w LEFT JOIN wine_holds h ON h.wine_id = w.id AND h.released_at IS NULL`;
 }
 
@@ -31,7 +31,7 @@ export function rowToWine(row: WineJoinRow): Wine {
     country: row.country, varietal: row.varietal, price: row.price, quantity: row.quantity, rating: row.rating,
     notes: row.notes, store: row.store, purchaseDate: row.purchase_date, drinkByDate: row.drink_by_date,
     location: row.location, createdAt: row.created_at, updatedAt: row.updated_at,
-    hold: row.hold_id ? { id: row.hold_id, wineId: row.id, reason: row.hold_reason, createdAt: row.hold_created_at ?? row.updated_at, releasedAt: row.hold_released_at } : null
+    hold: row.hold_id ? { id: row.hold_id, wineId: row.id, reason: row.hold_reason, until: row.hold_until, createdAt: row.hold_created_at ?? row.updated_at, releasedAt: row.hold_released_at } : null
   };
 }
 
@@ -48,7 +48,7 @@ export function rowToActivity(row: ActivityRow): ActivityEvent {
 }
 
 export function rowToHold(row: HoldRow): WineHold {
-  return { id: row.id, wineId: row.wine_id, reason: row.reason, createdAt: row.created_at, releasedAt: row.released_at };
+  return { id: row.id, wineId: row.wine_id, reason: row.reason, until: row.until, createdAt: row.created_at, releasedAt: row.released_at };
 }
 
 export function rowToTasting(row: TastingRow): Tasting {

@@ -50,6 +50,7 @@ export type ConsumeInput = {
   quantity?: unknown;
   rating?: unknown;
   notes?: unknown;
+  consumedAt?: unknown; // when the bottle was opened; defaults to now
 };
 
 // A tasting note recorded about a wine at a point in time (without necessarily opening it).
@@ -65,6 +66,7 @@ export type WineHold = {
   id: string;
   wineId: string;
   reason: string | null;
+  until: string | null; // YYYY-MM-DD the hold is meant to last to; informational, never auto-released
   createdAt: string;
   releasedAt: string | null;
 };
@@ -80,6 +82,8 @@ export type BatchImportInput = {
   readonly idempotencyKey: unknown;
   readonly source: BatchImportSource;
   readonly sourceId?: unknown;
+  readonly purchaseDate?: unknown; // batch-level YYYY-MM-DD; fills items that lack their own
+  readonly receiptImageUrl?: unknown;
   readonly items: readonly BatchImportItemInput[];
 };
 
@@ -91,6 +95,8 @@ export type NormalizedBatchImport = {
   readonly idempotencyKey: string;
   readonly source: BatchImportSource;
   readonly sourceId: string | null;
+  readonly purchaseDate: string | null;
+  readonly receiptImageUrl: string | null;
   readonly items: readonly NormalizedBatchImportItem[];
 };
 
@@ -98,6 +104,8 @@ export type BatchImportResult = {
   readonly id: string;
   readonly source: BatchImportSource;
   readonly sourceId: string | null;
+  readonly purchaseDate: string | null;
+  readonly receiptImageUrl: string | null;
   readonly wines: readonly Wine[];
   readonly createdAt: string;
 };
@@ -108,6 +116,7 @@ export type WriteOptions = {
 
 export type HoldInput = WriteOptions & {
   readonly reason?: unknown;
+  readonly until?: unknown; // YYYY-MM-DD
 };
 
 export type ReleaseHoldInput = WriteOptions;
@@ -276,6 +285,7 @@ export function normalizeIdempotencyKey(value: unknown): string {
 export function normalizeBatchImport(input: BatchImportInput): NormalizedBatchImport {
   const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
   if (!Array.isArray(input.items) || input.items.length === 0) throw new Error('items must include at least one wine row');
+  const purchaseDate = optionalDate(input.purchaseDate);
   const seen = new Set<string>();
   const items = input.items.map((item, index) => {
     if (item.kind === 'non_wine') throw new Error(`non-wine receipt row at index ${index}`);
@@ -284,14 +294,30 @@ export function normalizeBatchImport(input: BatchImportInput): NormalizedBatchIm
       if (seen.has(itemKey)) throw new Error(`duplicate itemKey ${itemKey}`);
       seen.add(itemKey);
     }
-    return { ...normalizeAddWine(item), itemKey };
+    const fields = normalizeAddWine(item);
+    // The batch-level purchase date fills items that do not carry their own.
+    return { ...fields, purchaseDate: fields.purchaseDate ?? purchaseDate, itemKey };
   });
   return {
     idempotencyKey,
     source: input.source,
     sourceId: optionalString(input.sourceId),
+    purchaseDate,
+    receiptImageUrl: optionalString(input.receiptImageUrl),
     items
   };
+}
+
+// Accept YYYY-MM-DD (expanded to midnight UTC, matching how bare dates are spoken)
+// or a full ISO8601 timestamp. An explicit but unparseable value throws rather than
+// silently becoming "now".
+export function optionalTimestamp(value: unknown, field: string): string | null {
+  const s = optionalString(value);
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00:00.000Z`;
+  const parsed = new Date(s);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
+  return parsed.toISOString();
 }
 
 const APPEND_ONLY_FORBIDDEN_FIELDS = new Set<keyof AddWineInput>([

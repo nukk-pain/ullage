@@ -49,6 +49,7 @@ const sampleHold: WineHold = {
   id: 'hold-1',
   wineId: 'wine-1',
   reason: 'Anniversary',
+  until: '2030-01-01',
   createdAt: '2026-01-02T00:00:00.000Z',
   releasedAt: null
 };
@@ -97,7 +98,7 @@ class AsyncFakeStore implements CellarStore {
 
   async importWines(input: BatchImportInput): Promise<BatchImportResult> {
     this.importInputs.push(input);
-    return { id: 'import-1', source: 'receipt', sourceId: 'receipt-1', wines: [sampleWine], createdAt: sampleWine.createdAt };
+    return { id: 'import-1', source: 'receipt', sourceId: 'receipt-1', purchaseDate: null, receiptImageUrl: null, wines: [sampleWine], createdAt: sampleWine.createdAt };
   }
 
   async listWines(): Promise<Wine[]> {
@@ -158,7 +159,7 @@ class AsyncFakeStore implements CellarStore {
   }
 
   async summary(): Promise<CellarSummary> {
-    return { wine_count: 1, bottle_count: 2, recent_wines: [{ id: sampleWine.id, name: sampleWine.name, quantity: sampleWine.quantity }] };
+    return { wine_count: 1, bottle_count: 2, consumed_out_count: 0, recent_wines: [{ id: sampleWine.id, name: sampleWine.name, quantity: sampleWine.quantity, hold: null }] };
   }
 
   async exportJson(): Promise<CellarExport> {
@@ -257,7 +258,7 @@ test('createUllageTools handlers await an injected store and preserve output sha
   const tools = createUllageTools(store);
 
   const summary = await tool(tools, 'cellar_summary').handler({});
-  assert.deepEqual(summary, { wine_count: 1, bottle_count: 2, recent_wines: [{ id: 'wine-1', name: 'Chablis', quantity: 2 }] });
+  assert.deepEqual(summary, { wine_count: 1, bottle_count: 2, consumed_out_count: 0, recent_wines: [{ id: 'wine-1', name: 'Chablis', quantity: 2, hold: null }] });
 
   const added = await tool(tools, 'add_wine').handler({ name: 'Chablis', quantity: 2, idempotencyKey: 'add-key-1' });
   assert.deepEqual(added, sampleWine);
@@ -269,9 +270,13 @@ test('createUllageTools handlers await an injected store and preserve output sha
     sourceId: 'receipt-1',
     items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }]
   });
-  assert.deepEqual(imported, { id: 'import-1', source: 'receipt', sourceId: 'receipt-1', wines: [sampleWine], createdAt: sampleWine.createdAt });
+  assert.deepEqual(imported, { id: 'import-1', source: 'receipt', sourceId: 'receipt-1', purchaseDate: null, receiptImageUrl: null, wines: [sampleWine], createdAt: sampleWine.createdAt });
   assert.deepEqual(store.importInputs, [
-    { idempotencyKey: 'receipt-key-1', source: 'receipt', sourceId: 'receipt-1', items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }] }
+    {
+      idempotencyKey: 'receipt-key-1', source: 'receipt', sourceId: 'receipt-1',
+      purchaseDate: undefined, receiptImageUrl: undefined,
+      items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }]
+    }
   ]);
 
   const updated = await tool(tools, 'update_wine').handler({ id: 'wine-1', region: 'Burgundy', idempotencyKey: 'update-key-1' });
@@ -290,8 +295,8 @@ test('createUllageTools handlers await an injected store and preserve output sha
   assert.deepEqual(note, { id: 'note-1', wineId: 'wine-1', note: 'mineral', rating: 4.2, createdAt: sampleWine.updatedAt });
   assert.deepEqual(store.notes, [{ id: 'wine-1', note: 'mineral', rating: 4.2, options: { idempotencyKey: 'note-key-1' } }]);
 
-  assert.deepEqual(await tool(tools, 'hold_wine').handler({ id: 'wine-1', reason: 'Anniversary', idempotencyKey: 'hold-key-1' }), sampleHold);
-  assert.deepEqual(store.holdInputs, [{ id: 'wine-1', input: { reason: 'Anniversary', idempotencyKey: 'hold-key-1' } }]);
+  assert.deepEqual(await tool(tools, 'hold_wine').handler({ id: 'wine-1', reason: 'Anniversary', until: '2030-01-01', idempotencyKey: 'hold-key-1' }), sampleHold);
+  assert.deepEqual(store.holdInputs, [{ id: 'wine-1', input: { reason: 'Anniversary', until: '2030-01-01', idempotencyKey: 'hold-key-1' } }]);
 
   assert.equal((await tool(tools, 'list_holds').handler({}) as WineHold[]).length, 1);
   assert.equal((await tool(tools, 'recommend_wines').handler({ occasion: 'dinner', limit: 2 }) as RecommendationResult).recommendations.length, 1);

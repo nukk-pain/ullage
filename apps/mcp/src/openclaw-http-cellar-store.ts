@@ -4,6 +4,7 @@ import {
   normalizeQuantity,
   optionalNumber,
   optionalString,
+  optionalTimestamp,
   resolveWineByName,
   type AddWineInput,
   type BatchImportInput,
@@ -72,9 +73,11 @@ export class OpenClawHttpCellarStore implements CellarStore {
     });
   }
 
-  async listWines(query?: string): Promise<Wine[]> {
+  async listWines(query?: string, inStock?: boolean): Promise<Wine[]> {
     const response = await this.request('GET', '/wines');
-    return filterWines(wineListFromJson(response.body), query);
+    const filtered = filterWines(wineListFromJson(response.body), query);
+    if (inStock === undefined) return filtered;
+    return filtered.filter((wine) => (inStock ? wine.quantity > 0 : wine.quantity === 0));
   }
 
   async getWine(id: string): Promise<Wine | undefined> {
@@ -120,6 +123,7 @@ export class OpenClawHttpCellarStore implements CellarStore {
       if (rating !== null) payload.rating = Math.trunc(rating);
       const notes = optionalString(input.notes);
       putIfPresent(payload, 'note', notes);
+      putIfPresent(payload, 'consumed_at', optionalTimestamp(input.consumedAt, 'consumedAt'));
 
       let latest: Wine = existing;
       for (let i = 0; i < consumed; i += 1) {
@@ -177,10 +181,12 @@ export class OpenClawHttpCellarStore implements CellarStore {
 
   async summary(): Promise<CellarSummary> {
     const wines = await this.listWines();
+    const inStock = wines.filter((wine) => wine.quantity > 0);
     return {
-      wine_count: wines.length,
-      bottle_count: wines.reduce((sum, wine) => sum + wine.quantity, 0),
-      recent_wines: wines.slice(0, 5).map((wine) => ({ id: wine.id, name: wine.name, quantity: wine.quantity }))
+      wine_count: inStock.length,
+      bottle_count: inStock.reduce((sum, wine) => sum + wine.quantity, 0),
+      consumed_out_count: wines.length - inStock.length,
+      recent_wines: inStock.slice(0, 5).map((wine) => ({ id: wine.id, name: wine.name, quantity: wine.quantity, hold: wine.hold ?? null }))
     };
   }
 
