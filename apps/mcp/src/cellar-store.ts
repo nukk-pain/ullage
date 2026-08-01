@@ -9,7 +9,12 @@ import type {
   RecommendationInput,
   RecommendationResult,
   ReleaseHoldInput,
+  RecordTastingInput,
+  ResolveWineResult,
+  Tasting,
   TastingNote,
+  TastingQuery,
+  UpdateConsumptionInput,
   Wine,
   WineHold,
   WriteOptions
@@ -30,16 +35,21 @@ export type CellarExport = {
   readonly activity: readonly ActivityEvent[];
   readonly holds: readonly WineHold[];
   readonly imports: readonly BatchImportResult[];
+  readonly tastings: readonly Tasting[];
 };
 
 export interface CellarStore {
   addWine(input: AddWineInput, options?: WriteOptions): Awaitable<Wine>;
   importWines(input: BatchImportInput): Awaitable<BatchImportResult>;
-  listWines(): Awaitable<Wine[]>;
+  listWines(query?: string): Awaitable<Wine[]>;
   getWine(id: string): Awaitable<Wine | undefined>;
+  resolveWine(query: string): Awaitable<ResolveWineResult>;
   updateWine(id: string, input: Partial<AddWineInput>, options?: WriteOptions): Awaitable<Wine | undefined>;
   consumeWine(id: string, input: ConsumeInput, options?: WriteOptions): Awaitable<Wine | undefined>;
   listConsumptions(wineId?: string): Awaitable<ConsumptionEvent[]>;
+  updateConsumption(eventId: string, input: UpdateConsumptionInput, options?: WriteOptions): Awaitable<ConsumptionEvent>;
+  recordTasting(input: RecordTastingInput, options?: WriteOptions): Awaitable<Tasting>;
+  listTastings(query?: TastingQuery): Awaitable<Tasting[]>;
   addNote(wineId: string, note: unknown, rating?: unknown, options?: WriteOptions): Awaitable<TastingNote>;
   listNotes(wineId?: string): Awaitable<TastingNote[]>;
   holdWine(id: string, input: HoldInput): Awaitable<WineHold>;

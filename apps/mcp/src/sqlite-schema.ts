@@ -33,6 +33,12 @@ export function initializeSqliteSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY, action TEXT NOT NULL, wine_id TEXT, summary TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(created_at);
+    CREATE TABLE IF NOT EXISTS tastings (
+      id TEXT PRIMARY KEY, wine_name TEXT NOT NULL, vintage INTEGER, producer TEXT, region TEXT,
+      venue TEXT, food_pairing TEXT, rating REAL, price REAL, currency TEXT, notes TEXT,
+      tasted_at TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tastings_time ON tastings(tasted_at);
   `);
 }
 

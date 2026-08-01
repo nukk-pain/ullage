@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ActivityAction, ActivityEvent, AddWineInput, BatchImportResult, ConsumptionEvent, TastingNote, Wine, WineHold } from '@ullage/domain';
+import type { ActivityAction, ActivityEvent, AddWineInput, BatchImportResult, ConsumptionEvent, Tasting, TastingNote, Wine, WineHold } from '@ullage/domain';
 
 export type WineJoinRow = {
   id: string; name: string; producer: string | null; vintage: number | null; region: string | null;
@@ -14,6 +14,11 @@ export type ActivityRow = { id: string; action: string; wine_id: string | null; 
 export type HoldRow = { id: string; wine_id: string; reason: string | null; created_at: string; released_at: string | null };
 export type IdempotencyRow = { idempotency_key: string; operation: string; payload_hash: string; result_json: string; created_at: string };
 export type ImportRow = { result_json: string };
+export type TastingRow = {
+  id: string; wine_name: string; vintage: number | null; producer: string | null; region: string | null;
+  venue: string | null; food_pairing: string | null; rating: number | null; price: number | null;
+  currency: string | null; notes: string | null; tasted_at: string; created_at: string;
+};
 
 export function wineSelectSql(): string {
   return `SELECT w.*, h.id AS hold_id, h.reason AS hold_reason, h.created_at AS hold_created_at, h.released_at AS hold_released_at
@@ -44,6 +49,37 @@ export function rowToActivity(row: ActivityRow): ActivityEvent {
 
 export function rowToHold(row: HoldRow): WineHold {
   return { id: row.id, wineId: row.wine_id, reason: row.reason, createdAt: row.created_at, releasedAt: row.released_at };
+}
+
+export function rowToTasting(row: TastingRow): Tasting {
+  return {
+    id: row.id, source: 'external', wineId: null, wineName: row.wine_name, vintage: row.vintage,
+    producer: row.producer, region: row.region, venue: row.venue,
+    foodPairing: parseFoodPairing(row.food_pairing), rating: row.rating, price: row.price,
+    currency: row.currency, notes: row.notes, tastedAt: row.tasted_at, createdAt: row.created_at
+  };
+}
+
+// A cellar consumption event shown on the unified tasting timeline.
+export function consumptionToTasting(row: ConsumptionRow, wine: Pick<Wine, 'name' | 'vintage' | 'producer' | 'region'> | undefined): Tasting {
+  return {
+    id: row.id, source: 'cellar', wineId: row.wine_id, wineName: wine?.name ?? 'Unknown wine',
+    vintage: wine?.vintage ?? null, producer: wine?.producer ?? null, region: wine?.region ?? null,
+    venue: null, foodPairing: null, rating: row.rating, price: null, currency: null,
+    notes: row.notes, tastedAt: row.consumed_at, createdAt: row.consumed_at
+  };
+}
+
+function parseFoodPairing(raw: string | null): readonly string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const items = parsed.filter((item): item is string => typeof item === 'string');
+    return items.length > 0 ? items : null;
+  } catch {
+    return null;
+  }
 }
 
 export function wineToInput(wine: Wine): AddWineInput {

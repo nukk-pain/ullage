@@ -51,9 +51,47 @@ test('CellarStore contract supports the full cellar lifecycle when backed by SQL
   assert.equal(exported.consumptions.length, 1);
   assert.equal(exported.notes.length, 1);
   assert.equal(exported.activity.length, 4);
+  assert.deepEqual(exported.tastings, []);
 
   await store.close();
   await unlink(dbPath);
+});
+
+test('CellarStore contract supports the tasting timeline, resolution, and pour fixes', async () => {
+  const store: CellarStore = new SqliteCellarStore(':memory:');
+
+  const wine = await store.addWine({ name: 'Chablis', producer: 'Raveneau', vintage: 2020, quantity: 1 }, { idempotencyKey: 'tl-add-1' });
+  await store.consumeWine(wine.id, { quantity: 1, notes: 'first pour' }, { idempotencyKey: 'tl-consume-1' });
+
+  const resolved = await store.resolveWine('chablis 2020');
+  assert.equal(resolved.status, 'resolved');
+
+  const searched = await store.listWines('raveneau');
+  assert.equal(searched.length, 1);
+
+  const event = (await store.listConsumptions(wine.id))[0];
+  const fixed = await store.updateConsumption(event.id, { rating: 4.2 }, { idempotencyKey: 'tl-fix-1' });
+  assert.equal(fixed.rating, 4.2);
+  assert.equal(fixed.notes, 'first pour');
+  const replayFixed = await store.updateConsumption(event.id, { rating: 4.2 }, { idempotencyKey: 'tl-fix-1' });
+  assert.deepEqual(replayFixed, fixed);
+
+  const tasting = await store.recordTasting(
+    { name: 'Barolo', tastedAt: '2099-01-01', venue: 'Osteria', rating: 4.5 },
+    { idempotencyKey: 'tl-tasting-1' }
+  );
+  const replayTasting = await store.recordTasting(
+    { name: 'Barolo', tastedAt: '2099-01-01', venue: 'Osteria', rating: 4.5 },
+    { idempotencyKey: 'tl-tasting-1' }
+  );
+  assert.deepEqual(replayTasting, tasting);
+
+  const timeline = await store.listTastings();
+  assert.deepEqual(timeline.map((entry) => entry.source), ['external', 'cellar']);
+  assert.equal((await store.listTastings({ source: 'external' })).length, 1);
+  assert.equal((await store.exportJson()).tastings.length, 1);
+
+  await store.close();
 });
 
 test('CellarStore production contract supports batch import holds notes recommendations and export', async () => {

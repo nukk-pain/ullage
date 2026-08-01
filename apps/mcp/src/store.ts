@@ -5,32 +5,40 @@ import { dirname } from 'node:path';
 import type { CellarExport, CellarStore, CellarSummary } from './cellar-store.js';
 import { initializeSqliteSchema, runIdempotent } from './sqlite-schema.js';
 import {
+  consumptionToTasting,
   describe,
   parseImportRow,
   rowToActivity,
   rowToConsumption,
   rowToHold,
   rowToNote,
+  rowToTasting,
   rowToWine,
   stripUndefined,
   truncate,
   wineSelectSql,
   wineToInput,
-  type ActivityRow, type ConsumptionRow, type HoldRow, type ImportRow, type NoteRow, type WineJoinRow
+  type ActivityRow, type ConsumptionRow, type HoldRow, type ImportRow, type NoteRow, type TastingRow, type WineJoinRow
 } from './sqlite-rows.js';
 import {
+  filterTastings,
+  filterWines,
   forbiddenAppendOnlyFields,
   normalizeAddWine,
   normalizeBatchImport,
   normalizeQuantity,
+  normalizeRecordTasting,
+  normalizeTastingQuery,
   optionalInt,
   optionalNumber,
   optionalString,
   requireText,
+  resolveWineByName,
   type ActivityAction, type ActivityEvent, type AddWineInput, type BatchImportInput,
   type BatchImportResult, type ConsumeInput, type ConsumptionEvent, type HoldInput,
   type RecommendationInput, type RecommendationResult, type ReleaseHoldInput,
-  type TastingNote, type Wine, type WineHold, type WriteOptions
+  type RecordTastingInput, type ResolveWineResult, type Tasting, type TastingNote,
+  type TastingQuery, type UpdateConsumptionInput, type Wine, type WineHold, type WriteOptions
 } from '@ullage/domain';
 
 export type SqliteCellarStoreOptions = {
@@ -73,13 +81,18 @@ export class SqliteCellarStore implements CellarStore {
     });
   }
 
-  listWines(): Wine[] {
-    return (this.db.prepare(`${wineSelectSql()} ORDER BY w.created_at DESC`).all() as WineJoinRow[]).map(rowToWine);
+  listWines(query?: string): Wine[] {
+    const wines = (this.db.prepare(`${wineSelectSql()} ORDER BY w.created_at DESC`).all() as WineJoinRow[]).map(rowToWine);
+    return filterWines(wines, query);
   }
 
   getWine(id: string): Wine | undefined {
     const row = this.db.prepare(`${wineSelectSql()} WHERE w.id = ?`).get(id) as WineJoinRow | undefined;
     return row ? rowToWine(row) : undefined;
+  }
+
+  resolveWine(query: string): ResolveWineResult {
+    return resolveWineByName(this.listWines(), query);
   }
 
   updateWine(id: string, input: Partial<AddWineInput>, options: WriteOptions = {}): Wine | undefined {
@@ -132,6 +145,59 @@ export class SqliteCellarStore implements CellarStore {
       ? this.db.prepare('SELECT * FROM consumption_events WHERE wine_id = ? ORDER BY consumed_at DESC').all(wineId)
       : this.db.prepare('SELECT * FROM consumption_events ORDER BY consumed_at DESC').all();
     return (rows as ConsumptionRow[]).map(rowToConsumption);
+  }
+
+  // Fix the rating/notes recorded on a past pour. This edits pour metadata, not wine
+  // identity or purchase facts, so it stays allowed in append-only mode.
+  updateConsumption(eventId: string, input: UpdateConsumptionInput, options: WriteOptions = {}): ConsumptionEvent {
+    return this.idempotent('updateConsumption', options.idempotencyKey, { eventId, input }, () => {
+      const row = this.db.prepare('SELECT * FROM consumption_events WHERE id = ?').get(eventId) as ConsumptionRow | undefined;
+      if (!row) throw new Error(`No consumption event with id ${eventId}`);
+      // An explicit clear flag wins over a value passed in the same call.
+      const rating = input.clearRating === true ? null : input.rating !== undefined ? optionalNumber(input.rating) : row.rating;
+      const notes = input.clearNotes === true ? null : input.notes !== undefined ? optionalString(input.notes) : row.notes;
+      this.db.prepare('UPDATE consumption_events SET rating = ?, notes = ? WHERE id = ?').run(rating, notes, eventId);
+      const wine = this.getWine(row.wine_id);
+      this.logActivity('consume_update', row.wine_id, `Updated pour of ${wine ? describe(wine) : row.wine_id}${rating !== null ? ` (${rating})` : ''}`);
+      return rowToConsumption({ ...row, rating, notes });
+    });
+  }
+
+  // Record a wine tasted outside the cellar (restaurant, bar, a friend's bottle).
+  // Never touches inventory.
+  recordTasting(input: RecordTastingInput, options: WriteOptions = {}): Tasting {
+    return this.idempotent('recordTasting', options.idempotencyKey, input, () => {
+      const f = normalizeRecordTasting(input);
+      const tasting: Tasting = { id: randomUUID(), source: 'external', wineId: null, ...f, createdAt: new Date().toISOString() };
+      this.db
+        .prepare(
+          `INSERT INTO tastings (id, wine_name, vintage, producer, region, venue, food_pairing, rating, price, currency, notes, tasted_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          tasting.id, tasting.wineName, tasting.vintage, tasting.producer, tasting.region, tasting.venue,
+          tasting.foodPairing ? JSON.stringify(tasting.foodPairing) : null,
+          tasting.rating, tasting.price, tasting.currency, tasting.notes, tasting.tastedAt, tasting.createdAt
+        );
+      this.logActivity(
+        'tasting',
+        null,
+        `Tasted ${describe({ name: tasting.wineName, vintage: tasting.vintage })}${tasting.venue ? ` at ${tasting.venue}` : ''}${tasting.rating !== null ? ` (${tasting.rating})` : ''}`
+      );
+      return tasting;
+    });
+  }
+
+  // Unified tasting timeline: cellar pours (consumption events) + external tastings.
+  listTastings(query: TastingQuery = {}): Tasting[] {
+    const normalized = normalizeTastingQuery(query);
+    const external = (this.db.prepare('SELECT * FROM tastings').all() as TastingRow[]).map(rowToTasting);
+    const wines = new Map(this.listWines().map((wine) => [wine.id, wine]));
+    const cellar = (this.db.prepare('SELECT * FROM consumption_events').all() as ConsumptionRow[]).map((row) =>
+      consumptionToTasting(row, wines.get(row.wine_id))
+    );
+    const merged = [...external, ...cellar].sort((left, right) => right.tastedAt.localeCompare(left.tastedAt));
+    return filterTastings(merged, normalized);
   }
 
   addNote(wineId: string, note: unknown, rating?: unknown, options: WriteOptions = {}): TastingNote {
@@ -210,7 +276,8 @@ export class SqliteCellarStore implements CellarStore {
   exportJson(): CellarExport {
     const activity = (this.db.prepare('SELECT * FROM activity_log ORDER BY created_at DESC').all() as ActivityRow[]).map(rowToActivity);
     const imports = (this.db.prepare('SELECT result_json FROM batch_imports ORDER BY created_at DESC').all() as ImportRow[]).map(parseImportRow);
-    return { wines: this.listWines(), consumptions: this.listConsumptions(), notes: this.listNotes(), activity, holds: this.allHolds(), imports };
+    const tastings = (this.db.prepare('SELECT * FROM tastings ORDER BY tasted_at DESC').all() as TastingRow[]).map(rowToTasting);
+    return { wines: this.listWines(), consumptions: this.listConsumptions(), notes: this.listNotes(), activity, holds: this.allHolds(), imports, tastings };
   }
 
   close(): void {
