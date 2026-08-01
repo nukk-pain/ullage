@@ -79,3 +79,22 @@ Verify the install by calling `cellar_summary`.
   `release_hold`) so retries do not duplicate work.
 - Use `recommend_wines` for hold-aware recommendations before suggesting a bottle to open.
 - Always call `cellar_summary` first so you work from current state.
+
+## 5. Wine details — your knowledge, the cellar's memory
+
+ullage never fetches wine data from the internet. When the user asks "what's this wine like?",
+"when should I open it?", or "is this producer any good?", answering is your job — use your own
+wine knowledge, and web search when you need current or specific facts. Then persist what is
+durable, so the cellar answers first next time:
+
+- Corrected or newly learned **identity facts** (varietal, region, country, producer) →
+  `update_wine`.
+- A **drinking window** → `update_wine` with `drinkByDate`; for a bottle worth aging, offer
+  `hold_wine` with `until` set to the window's start.
+- A **style profile or critic consensus** worth keeping → `add_note`, with the source URL in
+  the note text. Check `list_notes` before searching the web again — earlier lookups may
+  already answer.
+- Do **not** store volatile data such as market prices; look those up fresh each time and
+  compare against the stored purchase `price` when the user asks whether they paid well.
+- Never overwrite user-entered facts with fetched ones without confirmation; the user's label
+  and receipt are the primary source for identity and purchase fields.
