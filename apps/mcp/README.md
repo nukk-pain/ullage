@@ -8,13 +8,17 @@ On first use it opens the SQLite default adapter at `~/.ullage/cellar.db` (overr
 uses its own LLM (including vision for labels/receipts) and calls these tools:
 
 - `cellar_summary` — counts + recent wines (call first)
-- `list_wines` — full cellar
+- `list_wines` — full cellar, with optional `query` search
+- `resolve_wine` — natural-language name → one wine, candidates to disambiguate, or none
 - `add_wine` — `{ name, producer?, vintage?, quantity?, idempotencyKey }`
 - `import_label_photo_wines` / `import_receipt_wines` — atomic confirmed batch saves
 - `hold_wine`, `release_hold`, `list_holds` — protect bottles that should not be opened yet
 - `consume_wine` — `{ id, quantity?, rating?, notes?, idempotencyKey }`
+- `update_consumption` — fix the rating/notes on a past pour
+- `record_tasting` / `list_tastings` — wines drunk outside the cellar (restaurant, bar) plus a
+  unified drink history across cellar pours and outside tastings
 - `recommend_wines` — hold-aware recommendations
-- `export_cellar` — full cellar as JSON, including holds/imports
+- `export_cellar` — full cellar as JSON, including holds/imports/tastings
 
 The agent does label/receipt OCR itself (its vision LLM), asks for confirmation when needed, and
 calls the import tools with extracted fields. The server stores data; it does not run OCR.
@@ -31,7 +35,7 @@ binaries), so no experimental flags.
 From a checkout instead of npm:
 
 ```bash
-npm run build --workspace @ullage/mcp
+npm run build
 node apps/mcp/dist/index.js
 ```
 

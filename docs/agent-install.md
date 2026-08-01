@@ -14,7 +14,7 @@ steps, then manage the cellar.
 git clone https://github.com/nukk-pain/ullage
 cd ullage
 npm install
-npm run build --workspace @ullage/mcp
+npm run build
 ```
 
 Note the absolute path to `apps/mcp/dist/index.js`.
@@ -42,10 +42,11 @@ to you, the agent; ullage only stores and retrieves cellar data.
 
 ## 3. Tools
 
-`cellar_summary`, `list_wines`, `get_wine`, `add_wine`, `update_wine`, `consume_wine`,
-`list_consumptions`, `add_note`, `list_notes`, `list_activity`, `export_cellar`,
-`import_label_photo_wines`, `import_receipt_wines`, `hold_wine`, `release_hold`, `list_holds`,
-`recommend_wines`. Verify the install by calling `cellar_summary`.
+`cellar_summary`, `list_wines`, `get_wine`, `resolve_wine`, `add_wine`, `update_wine`,
+`consume_wine`, `list_consumptions`, `update_consumption`, `record_tasting`, `list_tastings`,
+`add_note`, `list_notes`, `list_activity`, `export_cellar`, `import_label_photo_wines`,
+`import_receipt_wines`, `hold_wine`, `release_hold`, `list_holds`, `recommend_wines`.
+Verify the install by calling `cellar_summary`.
 
 ## 4. Then manage the cellar
 
@@ -63,7 +64,14 @@ to you, the agent; ullage only stores and retrieves cellar data.
   with `list_notes`; show the cellar's change history with `list_activity`.
 - Use `hold_wine`, `release_hold`, and `list_holds` for bottles that should not be opened yet.
   Do not call `consume_wine` on held wine unless the user explicitly confirms releasing the hold first.
+- When the user names a wine ("the Barolo", "Chablis 2020"), call `resolve_wine` first; on an
+  `ambiguous` result, ask the user to pick a candidate before any write.
+- When the user drank a wine **outside the cellar** (restaurant, bar, a friend's bottle), record
+  it with `record_tasting` — it never touches inventory. `consume_wine` is only for bottles
+  opened from the cellar. Review everything actually drunk with `list_tastings`.
+- Fix the rating/notes on a past pour with `update_consumption` (event id from `list_consumptions`).
 - Use stable `idempotencyKey` values for every user-confirmed write (`add_wine`, `update_wine`,
-  `consume_wine`, `add_note`, import tools, `hold_wine`, `release_hold`) so retries do not duplicate work.
+  `consume_wine`, `update_consumption`, `record_tasting`, `add_note`, import tools, `hold_wine`,
+  `release_hold`) so retries do not duplicate work.
 - Use `recommend_wines` for hold-aware recommendations before suggesting a bottle to open.
 - Always call `cellar_summary` first so you work from current state.
