@@ -269,11 +269,11 @@ export class SqliteCellarStore implements CellarStore {
     const includeHeld = input.includeHeld === true;
     const wines = this.listWines().filter((wine) => wine.quantity > 0);
     const available = includeHeld ? wines : wines.filter((wine) => !wine.hold);
-    const excludedHeld = includeHeld ? [] : wines.filter((wine) => wine.hold !== undefined && wine.hold !== null);
+    const excludedHeldCount = includeHeld ? 0 : wines.filter((wine) => wine.hold !== undefined && wine.hold !== null).length;
     const occasion = optionalString(input.occasion);
     return {
       recommendations: available.slice(0, limit).map((wine) => ({ wine, reason: occasion ? `Available for ${occasion}` : 'Available and not on hold' })),
-      excludedHeld
+      excludedHeldCount
     };
   }
 

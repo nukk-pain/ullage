@@ -129,7 +129,8 @@ test('CellarStore production contract supports batch import holds notes recommen
 
   const recommendations = await store.recommendWines({ occasion: 'fried chicken', limit: 5 });
   assert.equal(recommendations.recommendations.some((entry) => entry.wine.id === batch.wines[0].id), false);
-  assert.equal(recommendations.excludedHeld.some((entry) => entry.id === batch.wines[0].id), true);
+  assert.equal(recommendations.excludedHeldCount, 1);
+  assert.equal('excludedHeld' in recommendations, false);
 
   const released = await store.releaseHold(batch.wines[0].id, { idempotencyKey: 'release-chat-1' });
   assert.equal(released.wineId, batch.wines[0].id);

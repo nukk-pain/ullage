@@ -134,7 +134,7 @@ export type WineRecommendation = {
 
 export type RecommendationResult = {
   readonly recommendations: readonly WineRecommendation[];
-  readonly excludedHeld: readonly Wine[];
+  readonly excludedHeldCount: number;
 };
 
 // A tasting: a wine actually drunk, in the cellar (a bottle opened) or outside it

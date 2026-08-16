@@ -145,7 +145,7 @@ class AsyncFakeStore implements CellarStore {
 
   async recommendWines(input: RecommendationInput): Promise<RecommendationResult> {
     this.recommendationInputs.push(input);
-    return { recommendations: [{ wine: sampleWine, reason: 'available' }], excludedHeld: [] };
+    return { recommendations: [{ wine: sampleWine, reason: 'available' }], excludedHeldCount: 0 };
   }
 
   async listNotes(wineId?: string): Promise<TastingNote[]> {
