@@ -91,7 +91,8 @@ export const tastingProps = {
   rating: { type: 'number' },
   price: { type: 'number', description: 'Price paid, e.g. per glass or bottle' },
   currency: { type: 'string', description: 'ISO currency code for price, e.g. "EUR"' },
-  notes: { type: 'string' }
+  notes: { type: 'string' },
+  imageUrl: { type: 'string', description: 'Optional source label or tasting photo URL' }
 } satisfies Record<string, Record<string, unknown>>;
 
 export function recordTastingInput(args: Record<string, unknown>): RecordTastingInput {
@@ -105,6 +106,7 @@ export function recordTastingInput(args: Record<string, unknown>): RecordTasting
   if ('price' in args) input.price = args.price;
   if ('currency' in args) input.currency = args.currency;
   if ('notes' in args) input.notes = args.notes;
+  if ('imageUrl' in args) input.imageUrl = args.imageUrl;
   return input;
 }
 

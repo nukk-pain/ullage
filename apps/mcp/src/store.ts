@@ -180,13 +180,13 @@ export class SqliteCellarStore implements CellarStore {
       const tasting: Tasting = { id: randomUUID(), source: 'external', wineId: null, ...f, createdAt: new Date().toISOString() };
       this.db
         .prepare(
-          `INSERT INTO tastings (id, wine_name, vintage, producer, region, venue, food_pairing, rating, price, currency, notes, tasted_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO tastings (id, wine_name, vintage, producer, region, venue, food_pairing, rating, price, currency, notes, image_url, tasted_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           tasting.id, tasting.wineName, tasting.vintage, tasting.producer, tasting.region, tasting.venue,
           tasting.foodPairing ? JSON.stringify(tasting.foodPairing) : null,
-          tasting.rating, tasting.price, tasting.currency, tasting.notes, tasting.tastedAt, tasting.createdAt
+          tasting.rating, tasting.price, tasting.currency, tasting.notes, tasting.imageUrl, tasting.tastedAt, tasting.createdAt
         );
       this.logActivity(
         'tasting',

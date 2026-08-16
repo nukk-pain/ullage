@@ -35,7 +35,7 @@ export function initializeSqliteSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(created_at);
     CREATE TABLE IF NOT EXISTS tastings (
       id TEXT PRIMARY KEY, wine_name TEXT NOT NULL, vintage INTEGER, producer TEXT, region TEXT,
-      venue TEXT, food_pairing TEXT, rating REAL, price REAL, currency TEXT, notes TEXT,
+      venue TEXT, food_pairing TEXT, rating REAL, price REAL, currency TEXT, notes TEXT, image_url TEXT,
       tasted_at TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_tastings_time ON tastings(tasted_at);
@@ -48,6 +48,11 @@ export function initializeSqliteSchema(db: Database.Database): void {
 function migrateSqliteSchema(db: Database.Database): void {
   const holdColumns = (db.prepare('PRAGMA table_info(wine_holds)').all() as { name: string }[]).map((c) => c.name);
   if (!holdColumns.includes('until')) db.exec('ALTER TABLE wine_holds ADD COLUMN until TEXT');
+  const tastingColumns = (db.prepare('PRAGMA table_info(tastings)').all() as { name: string }[]).map((c) => c.name);
+  if (!tastingColumns.includes('image_url')) db.exec('ALTER TABLE tastings ADD COLUMN image_url TEXT');
+  db.exec(`UPDATE tastings
+    SET image_url = trim(substr(notes, instr(notes, 'Source image: ') + length('Source image: ')))
+    WHERE image_url IS NULL AND notes LIKE '%Source image: %'`);
 }
 
 export function runIdempotent<T>(db: Database.Database, operation: string, key: string | undefined, payload: unknown, work: () => T): T {

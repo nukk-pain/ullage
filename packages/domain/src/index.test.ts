@@ -120,12 +120,12 @@ test('filterTastings applies source, rating, venue, and text filters over the un
     {
       id: 't-1', source: 'external', wineId: null, wineName: 'Barolo', vintage: 2016, producer: null,
       region: 'Piedmont', venue: 'Osteria Roma', foodPairing: null, rating: 4.5, price: null,
-      currency: null, notes: 'great', tastedAt: '2026-07-30', createdAt: '2026-07-30T12:00:00.000Z'
+      currency: null, notes: 'great', imageUrl: null, tastedAt: '2026-07-30', createdAt: '2026-07-30T12:00:00.000Z'
     },
     {
       id: 't-2', source: 'cellar', wineId: 'wine-1', wineName: 'Chablis', vintage: 2020, producer: 'Raveneau',
       region: 'Burgundy', venue: null, foodPairing: null, rating: 3, price: null,
-      currency: null, notes: null, tastedAt: '2026-07-29', createdAt: '2026-07-29T12:00:00.000Z'
+      currency: null, notes: null, imageUrl: null, tastedAt: '2026-07-29', createdAt: '2026-07-29T12:00:00.000Z'
     }
   ];
   assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ source: 'external' })).map((t) => t.id), ['t-1']);

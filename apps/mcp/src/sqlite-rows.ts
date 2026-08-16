@@ -17,7 +17,7 @@ export type ImportRow = { result_json: string };
 export type TastingRow = {
   id: string; wine_name: string; vintage: number | null; producer: string | null; region: string | null;
   venue: string | null; food_pairing: string | null; rating: number | null; price: number | null;
-  currency: string | null; notes: string | null; tasted_at: string; created_at: string;
+  currency: string | null; notes: string | null; image_url: string | null; tasted_at: string; created_at: string;
 };
 
 export function wineSelectSql(): string {
@@ -56,7 +56,7 @@ export function rowToTasting(row: TastingRow): Tasting {
     id: row.id, source: 'external', wineId: null, wineName: row.wine_name, vintage: row.vintage,
     producer: row.producer, region: row.region, venue: row.venue,
     foodPairing: parseFoodPairing(row.food_pairing), rating: row.rating, price: row.price,
-    currency: row.currency, notes: row.notes, tastedAt: row.tasted_at, createdAt: row.created_at
+    currency: row.currency, notes: row.notes, imageUrl: row.image_url, tastedAt: row.tasted_at, createdAt: row.created_at
   };
 }
 
@@ -66,7 +66,7 @@ export function consumptionToTasting(row: ConsumptionRow, wine: Pick<Wine, 'name
     id: row.id, source: 'cellar', wineId: row.wine_id, wineName: wine?.name ?? 'Unknown wine',
     vintage: wine?.vintage ?? null, producer: wine?.producer ?? null, region: wine?.region ?? null,
     venue: null, foodPairing: null, rating: row.rating, price: null, currency: null,
-    notes: row.notes, tastedAt: row.consumed_at, createdAt: row.consumed_at
+    notes: row.notes, imageUrl: null, tastedAt: row.consumed_at, createdAt: row.consumed_at
   };
 }
 

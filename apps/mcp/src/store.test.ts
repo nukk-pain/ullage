@@ -97,16 +97,17 @@ test('record_tasting stores an external tasting without touching inventory, idem
   const wine = store.addWine({ name: 'Barolo', quantity: 2 });
 
   const tasting = store.recordTasting(
-    { name: 'Brunello di Montalcino', tastedAt: '2026-07-30', venue: 'Osteria Roma', vintage: 2019, rating: 4.5, foodPairing: ['bistecca'], price: 18, currency: 'EUR' },
+    { name: 'Brunello di Montalcino', tastedAt: '2026-07-30', venue: 'Osteria Roma', vintage: 2019, rating: 4.5, foodPairing: ['bistecca'], price: 18, currency: 'EUR', imageUrl: 'https://example.test/tasting.jpg' },
     { idempotencyKey: 'tasting-1' }
   );
   assert.equal(tasting.source, 'external');
   assert.equal(tasting.wineName, 'Brunello di Montalcino');
   assert.deepEqual(tasting.foodPairing, ['bistecca']);
+  assert.equal(tasting.imageUrl, 'https://example.test/tasting.jpg');
   assert.equal(store.getWine(wine.id)?.quantity, 2); // inventory untouched
 
   const replay = store.recordTasting(
-    { name: 'Brunello di Montalcino', tastedAt: '2026-07-30', venue: 'Osteria Roma', vintage: 2019, rating: 4.5, foodPairing: ['bistecca'], price: 18, currency: 'EUR' },
+    { name: 'Brunello di Montalcino', tastedAt: '2026-07-30', venue: 'Osteria Roma', vintage: 2019, rating: 4.5, foodPairing: ['bistecca'], price: 18, currency: 'EUR', imageUrl: 'https://example.test/tasting.jpg' },
     { idempotencyKey: 'tasting-1' }
   );
   assert.deepEqual(replay, tasting);
@@ -279,6 +280,32 @@ test('schema upgrade adds wine_holds.until to a DB created before the column exi
   const holds = store.listHolds();
   assert.equal(holds.length, 1);
   assert.equal(holds[0]?.until, null); // legacy rows read back with null until
+  store.close();
+  await unlink(dbPath);
+});
+
+test('schema upgrade preserves a legacy tasting source image in imageUrl', async () => {
+  const { unlink } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { randomUUID } = await import('node:crypto');
+  const { default: Database } = await import('better-sqlite3');
+  const dbPath = join(tmpdir(), `ullage-tasting-image-migration-${randomUUID()}.db`);
+
+  const raw = new Database(dbPath);
+  raw.exec(`CREATE TABLE tastings (
+    id TEXT PRIMARY KEY, wine_name TEXT NOT NULL, vintage INTEGER, producer TEXT, region TEXT,
+    venue TEXT, food_pairing TEXT, rating REAL, price REAL, currency TEXT, notes TEXT,
+    tasted_at TEXT NOT NULL, created_at TEXT NOT NULL
+  );`);
+  raw.prepare('INSERT INTO tastings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    't-old', 'Barolo', 2016, null, null, null, null, 4.5, null, null,
+    'memorable\nSource image: https://example.test/legacy.jpg', '2026-01-01', '2026-01-01T00:00:00.000Z'
+  );
+  raw.close();
+
+  const store = new SqliteCellarStore(dbPath);
+  assert.equal(store.listTastings({ source: 'external' })[0]?.imageUrl, 'https://example.test/legacy.jpg');
   store.close();
   await unlink(dbPath);
 });

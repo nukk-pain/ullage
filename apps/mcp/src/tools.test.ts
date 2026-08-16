@@ -68,6 +68,7 @@ const sampleTasting: Tasting = {
   price: 18,
   currency: 'EUR',
   notes: 'by the glass',
+  imageUrl: null,
   tastedAt: '2026-07-30',
   createdAt: '2026-07-30T12:00:00.000Z'
 };

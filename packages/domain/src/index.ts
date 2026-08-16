@@ -155,6 +155,7 @@ export type Tasting = {
   price: number | null;
   currency: string | null;
   notes: string | null;
+  imageUrl: string | null;
   tastedAt: string;
   createdAt: string;
 };
@@ -171,6 +172,7 @@ export type RecordTastingInput = {
   price?: unknown;
   currency?: unknown;
   notes?: unknown;
+  imageUrl?: unknown;
 };
 
 export type NormalizedTastingFields = Omit<Tasting, 'id' | 'source' | 'wineId' | 'createdAt'>;
@@ -360,6 +362,7 @@ export function normalizeRecordTasting(input: RecordTastingInput): NormalizedTas
     price: optionalNumber(input.price),
     currency: optionalString(input.currency),
     notes: optionalString(input.notes),
+    imageUrl: optionalString(input.imageUrl),
     tastedAt
   };
 }
