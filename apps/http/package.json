@@ -1,0 +1,31 @@
+{
+  "name": "@ullage/http",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loopback HTTP transport for the ullage cellar tools — same handlers as the MCP server, reachable from browsers and non-MCP clients.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "ullage-http": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "prebuild": "npm run build --workspace @ullage/mcp",
+    "build": "tsc -p tsconfig.json",
+    "precheck": "npm run build --workspace @ullage/mcp",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run build --workspace @ullage/mcp",
+    "test": "node --import tsx --test src/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@ullage/mcp": "^0.1.0"
+  }
+}

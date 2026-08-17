@@ -54,6 +54,11 @@ export class SqliteCellarStore implements CellarStore {
   constructor(dbPath: string, options: SqliteCellarStoreOptions = {}) {
     if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
+    // More than one process can hold this cellar open (an MCP transport and an HTTP one).
+    // WAL lets readers work during a write, and the busy timeout makes a concurrent writer
+    // wait for the lock instead of failing the call outright.
+    if (dbPath !== ':memory:') this.db.pragma('journal_mode = WAL');
+    this.db.pragma('busy_timeout = 5000');
     this.appendOnly = options.appendOnly === true;
     initializeSqliteSchema(this.db);
   }

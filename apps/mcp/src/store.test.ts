@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SqliteCellarStore } from './store.js';
 
 test('add, list, and summarize wines (rich fields)', () => {
@@ -345,4 +349,25 @@ test('import batch-level purchaseDate fills items and lands on the import record
   assert.equal(byName.get('Barolo')?.purchaseDate, '2026-07-15'); // filled down
   assert.equal(byName.get('Chablis')?.purchaseDate, '2026-07-01'); // not overridden
   assert.equal(store.exportJson().imports[0]?.receiptImageUrl, 'https://example.com/receipt.jpg');
+});
+
+test('two stores on the same file interleave writes without lock errors', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'ullage-concurrency-')), 'cellar.db');
+  const first = new SqliteCellarStore(path);
+  const second = new SqliteCellarStore(path);
+  try {
+    const probe = new Database(path);
+    assert.equal(probe.pragma('journal_mode', { simple: true }), 'wal');
+    probe.close();
+    const wine = first.addWine({ name: 'Barolo', quantity: 4 });
+    // Interleaved writers stand in for the MCP transport and the HTTP transport running side by side.
+    second.consumeWine(wine.id, { quantity: 1 });
+    first.consumeWine(wine.id, { quantity: 1 });
+    second.addNote(wine.id, 'shared cellar, two writers');
+    assert.equal(second.getWine(wine.id)?.quantity, 2);
+    assert.equal(first.listConsumptions(wine.id).length, 2);
+  } finally {
+    first.close();
+    second.close();
+  }
 });
