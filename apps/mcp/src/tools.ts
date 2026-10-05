@@ -1,9 +1,11 @@
 import type { CellarStore } from './cellar-store.js';
+import { createPriceConverter, type PriceConverter } from './fx.js';
 import type { McpTool } from './mcp.js';
 import {
   addWineInput,
   batchImportInput,
   consumeInput,
+  currencyProp,
   holdInput,
   idempotencyProp,
   importSchema,
@@ -21,7 +23,15 @@ import {
   wineProps
 } from './tool-inputs.js';
 
-export function createUllageTools(store: CellarStore): McpTool[] {
+export function createUllageTools(store: CellarStore, convertPrice: PriceConverter = createPriceConverter(null)): McpTool[] {
+  async function convertImport(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!Array.isArray(args.items)) return args;
+    const items = await Promise.all(args.items.map((item: unknown) =>
+      typeof item === 'object' && item !== null && !Array.isArray(item) ? convertPrice(item as Record<string, unknown>, args.purchaseDate) : item
+    ));
+    return { ...args, items };
+  }
+
   return [
     {
       name: 'cellar_summary',
@@ -62,8 +72,8 @@ export function createUllageTools(store: CellarStore): McpTool[] {
     {
       name: 'add_wine',
       description: 'Add a bottle. Put the year in `vintage` (integer), not in `name`. quantity defaults to 1. Capture region/varietal/drink-by when known; from a receipt also capture price, purchaseDate (YYYY-MM-DD), and store.',
-      inputSchema: { type: 'object', properties: { ...wineProps, ...idempotencyProp }, required: ['name', 'idempotencyKey'], additionalProperties: false },
-      handler: async (args) => store.addWine(addWineInput(args), requiredWriteOptions(args))
+      inputSchema: { type: 'object', properties: { ...wineProps, ...currencyProp, ...idempotencyProp }, required: ['name', 'idempotencyKey'], additionalProperties: false },
+      handler: async (args) => store.addWine(addWineInput(await convertPrice(args)), requiredWriteOptions(args))
     },
     {
       name: 'update_wine',
@@ -189,13 +199,13 @@ export function createUllageTools(store: CellarStore): McpTool[] {
       name: 'import_label_photo_wines',
       description: 'Save multiple agent-confirmed wines extracted from label photos as one atomic batch. The agent supplies structured fields after image/OCR work.',
       inputSchema: importSchema('label_photo'),
-      handler: async (args) => store.importWines(batchImportInput(args, 'label_photo'))
+      handler: async (args) => store.importWines(batchImportInput(await convertImport(args), 'label_photo'))
     },
     {
       name: 'import_receipt_wines',
       description: 'Save multiple agent-confirmed wines extracted from a receipt photo as one atomic batch, including price, purchaseDate, and store when known.',
       inputSchema: importSchema('receipt'),
-      handler: async (args) => store.importWines(batchImportInput(args, 'receipt'))
+      handler: async (args) => store.importWines(batchImportInput(await convertImport(args), 'receipt'))
     },
     {
       name: 'hold_wine',

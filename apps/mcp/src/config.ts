@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { FxConfig } from './fx.js';
 
 export type UllageConfig =
   | {
@@ -18,6 +19,8 @@ export type UllageEnv = {
   readonly ULLAGE_DB?: string;
   readonly ULLAGE_APPEND_ONLY?: string;
   readonly ULLAGE_OPENCLAW_BASE_URL?: string;
+  readonly ULLAGE_HOME_CURRENCY?: string;
+  readonly ULLAGE_FX_RATE_URL?: string;
 };
 
 const DEFAULT_OPENCLAW_BASE_URL = 'http://localhost:8080/cellar';
@@ -46,6 +49,19 @@ export function parseUllageConfig(env: UllageEnv, defaultSqlitePath = createDefa
     default:
       throw new ConfigError(backendVariable.name, `Unsupported ${backendVariable.name} ${backend}. Supported backends: sqlite, openclaw.`);
   }
+}
+
+export function parseFxConfig(env: UllageEnv): FxConfig | null {
+  const homeCurrency = env.ULLAGE_HOME_CURRENCY?.trim().toUpperCase() ?? '';
+  const rateUrl = env.ULLAGE_FX_RATE_URL?.trim() ?? '';
+  if (homeCurrency === '' && rateUrl === '') return null;
+  if (!/^[A-Z]{3}$/.test(homeCurrency)) {
+    throw new ConfigError('ULLAGE_HOME_CURRENCY', 'ULLAGE_HOME_CURRENCY must be an ISO 4217 code such as KRW when ULLAGE_FX_RATE_URL is set.');
+  }
+  if (!/^https?:\/\//.test(rateUrl) || !rateUrl.includes('{currency}')) {
+    throw new ConfigError('ULLAGE_FX_RATE_URL', 'ULLAGE_FX_RATE_URL must be an http(s) URL containing {currency} (and optionally {date}) when ULLAGE_HOME_CURRENCY is set.');
+  }
+  return { homeCurrency, rateUrl };
 }
 
 function backendEnvVariable(env: UllageEnv): { readonly name: 'ULLAGE_BACKEND' | 'ULLAGE_STORE'; readonly value: string } {

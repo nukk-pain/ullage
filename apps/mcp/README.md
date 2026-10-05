@@ -66,6 +66,12 @@ defaults to `~/.ullage/cellar.db`.
 Set `ULLAGE_APPEND_ONLY=true` with SQLite to reject direct edits to saved wine
 identity/purchase fields and record later changes as consume, hold, release, or note events.
 
+To keep `price` in one currency, set `ULLAGE_HOME_CURRENCY` (e.g. `KRW`) and `ULLAGE_FX_RATE_URL`
+together. The URL takes `{currency}` and `{date}` placeholders and must return JSON with a positive
+`rate` (home-currency units per one foreign unit). `add_wine` and the import tools then accept a
+`currency` for a foreign price, convert it at the purchase-date rate, and append the original
+amount to `notes`. Without these variables a foreign `currency` is rejected, never stored as-is.
+
 Normal installs should leave backend variables unset. Alternate storage adapters are private or
 advanced integrations selected only by environment variable, and are not part of the zero-setup
 agent path.

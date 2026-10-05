@@ -16,9 +16,13 @@ export const wineProps = {
   location: { type: 'string', description: 'Where it is stored' }
 } satisfies Record<string, Record<string, unknown>>;
 
+export const currencyProp = {
+  currency: { type: 'string', description: 'ISO 4217 code of `price` when it was paid in another currency, e.g. "CHF". The server converts it to the cellar currency at the purchase-date rate and notes the original amount.' }
+};
+
 export const idempotencyProp = { idempotencyKey: { type: 'string', description: 'Stable caller key for a confirmed write action' } };
 
-const importItemProps = { ...wineProps, itemKey: { type: 'string' }, kind: { type: 'string' } };
+const importItemProps = { ...wineProps, ...currencyProp, itemKey: { type: 'string' }, kind: { type: 'string' } };
 
 export function importSchema(source: 'receipt' | 'label_photo'): Record<string, unknown> {
   return {
