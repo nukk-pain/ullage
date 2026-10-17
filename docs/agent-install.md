@@ -10,10 +10,12 @@ steps, then manage the cellar.
 
 ## 1. Get and build
 
+The npm package is not published yet, so `npx @ullage/mcp` is unavailable. Install from a checkout:
+
 ```bash
 git clone https://github.com/nukk-pain/ullage
 cd ullage
-npm install
+npm ci
 npm run build
 ```
 
@@ -45,7 +47,8 @@ to you, the agent; ullage only stores and retrieves cellar data.
 `cellar_summary`, `list_wines`, `get_wine`, `resolve_wine`, `add_wine`, `update_wine`,
 `consume_wine`, `list_consumptions`, `update_consumption`, `record_tasting`, `list_tastings`,
 `add_note`, `list_notes`, `list_activity`, `export_cellar`, `import_label_photo_wines`,
-`import_receipt_wines`, `hold_wine`, `release_hold`, `list_holds`, `recommend_wines`.
+`import_receipt_wines`, `hold_wine`, `release_hold`, `list_holds`, `recommend_wines`,
+`get_exchange_rate`.
 Verify the install by calling `cellar_summary`.
 
 ## 4. Then manage the cellar

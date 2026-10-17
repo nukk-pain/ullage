@@ -29,32 +29,31 @@ calls the import tools with extracted fields. The server stores data; it does no
 ## Run
 
 ```bash
-npx @ullage/mcp           # speaks MCP over stdio
-```
-
-Requires **Node 20+**. The default SQLite adapter uses `better-sqlite3` (native, prebuilt
-binaries), so no experimental flags.
-
-From a checkout instead of npm:
-
-```bash
+git clone https://github.com/nukk-pain/ullage
+cd ullage
+npm ci
 npm run build
 node apps/mcp/dist/index.js
 ```
 
+Requires **Node 20+**. The npm package is not published yet, so `npx @ullage/mcp` is unavailable.
+The default SQLite adapter uses `better-sqlite3` (native, prebuilt binaries), so no experimental
+flags are required.
+
 ## Register with an agent
 
-**OpenClaw / Hermes / generic MCP client** — add one stdio server entry, e.g.:
+**OpenClaw / Hermes / generic MCP client** — build the checkout above, then add one stdio server
+entry using the absolute path to the built file, e.g.:
 
 ```json
 {
   "mcpServers": {
-    "ullage": { "command": "npx", "args": ["-y", "@ullage/mcp"] }
+    "ullage": { "command": "node", "args": ["<ABS>/ullage/apps/mcp/dist/index.js"] }
   }
 }
 ```
 
-Hermes one-liner: `hermes mcp add ullage --command npx --args -y @ullage/mcp`.
+Hermes one-liner: `hermes mcp add ullage --command node --args <ABS>/ullage/apps/mcp/dist/index.js`.
 
 That is the whole setup — start talking ("add a Barolo 2016", "what's in my cellar").
 

@@ -22,6 +22,9 @@ The agent reads [docs/agent-install.md](docs/agent-install.md), installs the MCP
 runner (SQLite default adapter — no token, no Docker), starts a fresh session, and then manages
 your cellar per that runbook.
 
+The npm package is not published yet, so `npx @ullage/mcp` is unavailable. Use the checkout
+instructions in the runbook until a package release is available.
+
 > **Agent reading this repo:** follow [docs/agent-install.md](docs/agent-install.md) to install
 > and then operate the cellar. You need a shell with `git` and Node.js 20+.
 
