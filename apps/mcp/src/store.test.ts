@@ -69,6 +69,7 @@ test('update and consume reject explicitly invalid quantities without changing s
   assert.equal(store.listConsumptions(wine.id).length, 0);
   assert.equal(store.listWines().length, 1);
   assert.equal(store.listActivity().length, 1);
+  assert.equal(store.exportJson().imports.length, 0);
 });
 
 test('add requires a name', () => {
