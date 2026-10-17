@@ -93,6 +93,7 @@ test('a foreign price is rejected rather than stored unconverted', async () => {
   await assert.rejects(createPriceConverter(config, rateFetcher({ rate: 1 }, [], false))({ name: 'A', price: 15, currency: 'CHF' }), /could not get the CHF\/KRW rate for .*HTTP 404/);
   await assert.rejects(createPriceConverter(config, rateFetcher({ rate: 0 }))({ name: 'A', price: 15, currency: 'CHF' }), /no positive numeric "rate"/);
   await assert.rejects(createPriceConverter(config, rateFetcher(1))({ name: 'A', price: 15, currency: 'Swiss franc' }), /ISO 4217/);
+  await assert.rejects(createPriceConverter(config, rateFetcher({ rate: 1 }))({ name: 'A', price: '24.50', currency: 'CHF' }), /price must be a finite number/);
 });
 
 test('parseFxConfig defaults to Frankfurter when only the home currency is set', () => {

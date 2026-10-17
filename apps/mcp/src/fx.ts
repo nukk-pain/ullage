@@ -77,7 +77,8 @@ export function createFxService(
     const { currency: raw, ...rest } = args;
     const currency = normalizeCurrency(raw);
     const price = rest.price;
-    if (typeof price !== 'number' || !Number.isFinite(price)) return rest;
+    if (price === undefined || price === null) return rest;
+    if (typeof price !== 'number' || !Number.isFinite(price)) throw new Error('price must be a finite number when currency is provided');
     if (config === null) throw missingFxConfig(currency);
     if (currency === config.homeCurrency) return rest;
     const date = optionalDate(rest.purchaseDate) ?? optionalDate(fallbackDate) ?? today();

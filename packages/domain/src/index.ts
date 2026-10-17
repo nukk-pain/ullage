@@ -248,12 +248,15 @@ export function optionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-// Accept YYYY-MM-DD (or anything Date can parse) and normalize to YYYY-MM-DD; else null.
 export function optionalDate(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
   const s = optionalString(value);
-  if (!s) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+  if (s === null || !/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error('date must be a valid YYYY-MM-DD date');
+  const parsed = new Date(`${s}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== s) {
+    throw new Error('date must be a valid YYYY-MM-DD date');
+  }
+  return s;
 }
 
 export function normalizeQuantity(value: unknown, fallback = 1): number {
@@ -325,7 +328,10 @@ export function normalizeBatchImport(input: BatchImportInput): NormalizedBatchIm
 export function optionalTimestamp(value: unknown, field: string): string | null {
   const s = optionalString(value);
   if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00:00.000Z`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${optionalDate(s)}T00:00:00.000Z`;
+  const datePart = /^(\d{4}-\d{2}-\d{2})T/.exec(s)?.[1];
+  if (datePart === undefined) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
+  optionalDate(datePart);
   const parsed = new Date(s);
   if (Number.isNaN(parsed.getTime())) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
   return parsed.toISOString();
@@ -434,18 +440,12 @@ export function resolveWineByName(wines: readonly Wine[], rawQuery: unknown): Re
   const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
   if (!query) return { status: 'none', query };
 
-  let effectiveQuery = query;
-  let candidates = filterWines(wines, query);
-  if (candidates.length === 0) {
-    const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
-    if (!vintageMatch) return { status: 'none', query };
-    effectiveQuery = vintageMatch[1];
-    const vintage = Number(vintageMatch[2]);
-    candidates = filterWines(wines, effectiveQuery);
-    const vintageCandidates = candidates.filter((wine) => wine.vintage === vintage);
-    if (vintageCandidates.length > 0) candidates = vintageCandidates;
-    if (candidates.length === 0) return { status: 'none', query };
-  }
+  const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
+  const effectiveQuery = vintageMatch?.[1] ?? query;
+  const requestedVintage = vintageMatch === null ? null : Number(vintageMatch[2]);
+  let candidates = filterWines(wines, effectiveQuery);
+  if (requestedVintage !== null) candidates = candidates.filter((wine) => wine.vintage === requestedVintage);
+  if (candidates.length === 0) return { status: 'none', query };
 
   const ranked = [...candidates].sort((left, right) => {
     const stock = Number(right.quantity > 0) - Number(left.quantity > 0);

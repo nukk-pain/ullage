@@ -253,6 +253,18 @@ test('consume_wine accepts consumedAt as a bare date or ISO timestamp, rejects g
   assert.equal(store.getWine(again.id)?.quantity, 1); // failed consume left stock untouched
 });
 
+test('all stored date fields reject impossible calendar dates', () => {
+  const store = new SqliteCellarStore(':memory:');
+  assert.throws(() => store.addWine({ name: 'Invalid purchase', purchaseDate: '2026-02-31' }), /valid YYYY-MM-DD date/);
+  assert.throws(() => store.addWine({ name: 'Invalid drink-by', drinkByDate: '2026-13-45' }), /valid YYYY-MM-DD date/);
+  const wine = store.addWine({ name: 'Barolo', quantity: 2 });
+  assert.throws(() => store.consumeWine(wine.id, { consumedAt: '2026-02-31' }), /valid YYYY-MM-DD date/);
+  assert.throws(() => store.consumeWine(wine.id, { consumedAt: '2026-02-31T12:00:00.000Z' }), /valid YYYY-MM-DD date/);
+  assert.throws(() => store.recordTasting({ name: 'Barolo', tastedAt: '2026-02-31' }), /valid YYYY-MM-DD date/);
+  assert.throws(() => store.holdWine(wine.id, { until: '2026-02-31' }), /valid YYYY-MM-DD date/);
+  assert.equal(store.getWine(wine.id)?.quantity, 2);
+});
+
 test('hold_wine stores an until date and re-holding updates instead of ignoring', () => {
   const store = new SqliteCellarStore(':memory:');
   const wine = store.addWine({ name: 'Brunello', quantity: 1 });

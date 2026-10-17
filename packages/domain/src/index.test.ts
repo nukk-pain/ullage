@@ -53,8 +53,14 @@ test('requireName rejects blank names', () => {
 });
 
 test('optionalDate normalizes to YYYY-MM-DD or null', () => {
-  assert.equal(optionalDate('2026-03-14 15:42'), '2026-03-14');
-  assert.equal(optionalDate('not a date'), null);
+  assert.equal(optionalDate('2026-03-14'), '2026-03-14');
+  assert.equal(optionalDate(undefined), null);
+  assert.throws(() => optionalDate('not a date'), /valid YYYY-MM-DD date/);
+  assert.throws(() => optionalDate('2030-02-31'), /valid YYYY-MM-DD date/);
+  assert.throws(() => optionalDate('2026-03-14suffix'), /valid YYYY-MM-DD date/);
+  assert.throws(() => normalizeBatchImport({
+    idempotencyKey: 'invalid-date-import', source: 'receipt', purchaseDate: '2026-02-31', items: [{ name: 'Barolo' }]
+  }), /valid YYYY-MM-DD date/);
   assert.equal(optionalInt('2019'), 2019);
 });
 
@@ -114,7 +120,7 @@ test('normalizeRecordTasting requires name and tastedAt and normalizes optionals
   assert.equal(tasting.rating, 4.5);
   assert.deepEqual(tasting.foodPairing, ['bistecca']);
 
-  assert.throws(() => normalizeRecordTasting({ name: 'Barolo', tastedAt: 'not a date' }), /tastedAt is required/);
+  assert.throws(() => normalizeRecordTasting({ name: 'Barolo', tastedAt: 'not a date' }), /valid YYYY-MM-DD date/);
   assert.throws(() => normalizeRecordTasting({ name: '  ', tastedAt: '2026-07-30' }), /name is required/);
 });
 
@@ -188,4 +194,6 @@ test('resolveWineByName resolves exact, surfaces ambiguity, and splits a trailin
 
   assert.equal(resolveWineByName(wines, '').status, 'none');
   assert.equal(resolveWineByName(wines, 'Rioja 2015').status, 'none');
+  const wrongVintage = resolveWineByName([wineFixture({ id: 'w-4', name: 'Chablis', vintage: 2019 })], 'Chablis 2021');
+  assert.equal(wrongVintage.status, 'none');
 });
