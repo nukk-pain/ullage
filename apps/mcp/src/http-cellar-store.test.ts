@@ -20,7 +20,7 @@ test('HttpCellarStore maps listWines from GET /wines without requiring a client 
 });
 
 test('HttpCellarStore sends snake_case API fields when adding wine with POST /wines', async () => {
-  const server = await startFakeHTTPServer(() => ({ status: 201, body: serviceWine }));
+  const server = await startFakeHTTPServer(() => ({ status: 201, body: { ...serviceWine, drinkByDate: '2030-01-02', location: 'A1' } }));
   try {
     const store = new HttpCellarStore(server.baseUrl);
 
@@ -32,22 +32,37 @@ test('HttpCellarStore sends snake_case API fields when adding wine with POST /wi
     });
 
     const request = onlyRequest(server.requests);
-    assert.deepEqual(added, mappedWine);
+    assert.deepEqual(added, { ...mappedWine, drinkByDate: '2030-01-02', location: 'A1' });
     assert.deepEqual(requestSummary(server.requests), [{ method: 'POST', path: '/wines' }]);
     assert.deepEqual(JSON.parse(request.body), {
       name: 'Chablis',
       producer: 'Raveneau',
-      vintage: '2020',
+      vintage: 2020,
       region: 'Burgundy',
       country: 'France',
       varietal: 'Chardonnay',
-      grape_variety: 'Chardonnay',
       price: 90,
       quantity: 2,
       notes: 'mineral',
       store: 'K&L',
-      purchase_date: '2026-01-02'
+      purchase_date: '2026-01-02',
+      drink_by_date: '2030-01-02',
+      location: 'A1'
     });
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore reports when the API does not confirm requested drink-by or location fields', async () => {
+  const server = await startFakeHTTPServer(() => ({ status: 201, body: serviceWine }));
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    await assert.rejects(
+      () => store.addWine({ name: 'Chablis', drinkByDate: '2030-01-02', location: 'A1' }),
+      /did not confirm saved fields: drinkByDate, location/
+    );
+    assert.equal(server.requests.length, 1);
   } finally {
     await server.close();
   }
@@ -131,7 +146,7 @@ test('HttpCellarStore consumes quantity two as two POST /wines/:id/consume reque
   try {
     const store = new HttpCellarStore(server.baseUrl);
 
-    const wine = await store.consumeWine('wine-1', { quantity: 2, rating: 4, notes: 'dinner' });
+    const wine = await store.consumeWine('wine-1', { quantity: 2, rating: 4.5, notes: 'dinner' });
 
     assert.deepEqual(wine, { ...mappedWine, quantity: 0, updatedAt: '2026-01-06T00:00:00.000Z' });
     assert.deepEqual(requestSummary(server.requests), [
@@ -140,8 +155,8 @@ test('HttpCellarStore consumes quantity two as two POST /wines/:id/consume reque
       { method: 'POST', path: '/wines/wine-1/consume' }
     ]);
     assert.deepEqual(server.requests.filter((request) => request.method === 'POST').map((request) => JSON.parse(request.body)), [
-      { rating: 4, note: 'dinner' },
-      { rating: 4, note: 'dinner' }
+      { rating: 4.5, note: 'dinner' },
+      { rating: 4.5, note: 'dinner' }
     ]);
   } finally {
     await server.close();
@@ -348,10 +363,10 @@ test('HttpCellarStore maps listConsumptions from paginated consumed wine rows', 
   const consumedRow = {
     id: 'consume-1', wineId: 'wine-1', name: 'Chablis', vintage: '2020',
     producer: 'Raveneau', quantity: 1, consumedAt: '2026-01-07T00:00:00.000Z',
-    notes: 'wine-level note, not a consumption event note', status: 'Consumed',
+    rating: 4.5, notes: 'event note', status: 'Consumed',
     createdAt: '2026-01-07T00:00:00.000Z', updatedAt: '2026-01-07T00:00:00.000Z'
   };
-  const olderRow = { ...consumedRow, id: 'consume-2', consumedAt: '2026-01-06T00:00:00.000Z', note: 'older' };
+  const olderRow = { ...consumedRow, id: 'consume-2', consumedAt: '2026-01-06T00:00:00.000Z', rating: null, notes: null };
   const pages = [
     { status: 200, body: { wines: [consumedRow], total: 2 } },
     { status: 200, body: { wines: [olderRow], total: 2 } }
@@ -367,8 +382,8 @@ test('HttpCellarStore maps listConsumptions from paginated consumed wine rows', 
         id: 'consume-1',
         wineId: 'wine-1',
         quantity: 1,
-        rating: null,
-        notes: null,
+        rating: 4.5,
+        notes: 'event note',
         consumedAt: '2026-01-07T00:00:00.000Z'
       },
       {
@@ -383,6 +398,28 @@ test('HttpCellarStore maps listConsumptions from paginated consumed wine rows', 
     assert.deepEqual(requestSummary(server.requests), [
       { method: 'GET', path: '/wines?status=Consumed&limit=100&offset=0' },
       { method: 'GET', path: '/wines?status=Consumed&limit=100&offset=1' }
+    ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore continues consumed-history pagination when total is omitted', async () => {
+  const row = (id: string) => ({
+    id, wineId: 'wine-1', quantity: 1, consumedAt: '2026-01-07T00:00:00.000Z'
+  });
+  const pages = [
+    { status: 200, body: { wines: Array.from({ length: 100 }, (_, index) => row(`consume-${index}`)) } },
+    { status: 200, body: { wines: [row('consume-100')] } }
+  ];
+  const server = await startFakeHTTPServer(() => pages.shift() ?? { status: 500, body: {} });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    const events = await store.listConsumptions();
+    assert.equal(events.length, 101);
+    assert.deepEqual(server.requests.map((request) => request.path), [
+      '/wines?status=Consumed&limit=100&offset=0',
+      '/wines?status=Consumed&limit=100&offset=100'
     ]);
   } finally {
     await server.close();

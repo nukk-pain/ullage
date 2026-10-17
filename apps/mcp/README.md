@@ -106,15 +106,21 @@ contract:
 | Request | Request body | Successful response |
 | --- | --- | --- |
 | `GET /wines` | None | `{ "wines": [Wine, ...] }` |
-| `POST /wines` | `{ name, quantity, producer?, vintage?, region?, country?, varietal?, grape_variety?, price?, store?, purchase_date?, notes? }` | A `Wine` object |
+| `POST /wines` | `{ name, quantity, producer?, vintage?, region?, country?, varietal?, price?, store?, purchase_date?, drink_by_date?, location?, notes? }` | A `Wine` object |
 | `GET /wines/{id}` | None | A `Wine` object; `404` means not found |
 | `POST /wines/{id}/consume` | `{ rating?, note?, consumed_at? }` | A `Wine` object or `{ "sourceWine": Wine }`; `404` means not found |
-| `GET /wines?status=Consumed&limit=100&offset={n}` | None | `{ "wines": [Consumption, ...], "total": number }` |
+| `GET /wines?status=Consumed&limit=100&offset={n}` | None | `{ "wines": [Consumption, ...], "total"?: number }` |
 
 `Wine` responses use camelCase fields and must include non-empty `id`, `name`, `createdAt`, and
-`updatedAt`. Optional fields include `producer`, `vintage`, `region`, `country`, `varietal` (or
-`grapeVariety`), `price`, `quantity`, `rating`, `notes`, `store`, and `purchaseDate`. Consumption
-rows must include non-empty `id`, `wineId`, and `consumedAt`; `quantity` defaults to one if omitted.
+`updatedAt`. Optional fields include `producer`, `vintage` (a JSON number), `region`, `country`,
+`varietal` (or response alias `grapeVariety`), `price`, `quantity`, `rating` (a JSON number),
+`notes`, `store`, `purchaseDate`, `drinkByDate`, and `location`. An add request that supplies
+`drink_by_date` or `location` must receive the corresponding response field so the client can
+confirm that the server saved it; otherwise the client reports that the result is unconfirmed.
+Consumption rows represent individual consumption events and must include non-empty `id`, `wineId`,
+and `consumedAt`; `quantity` defaults to one if omitted. Optional event fields `rating` (a JSON
+number) and `notes` map to the corresponding consumption history values. The `total` field may be
+omitted; in that case the client continues through full pages until it receives a short or empty page.
 The client filters `GET /wines` results locally. A consume quantity greater than one becomes
 sequential `POST /wines/{id}/consume` requests. MCP `idempotencyKey` values are sent to the HTTP
 server as `Idempotency-Key` headers; each bottle request uses a stable per-bottle key derived from

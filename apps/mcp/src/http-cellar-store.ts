@@ -81,19 +81,27 @@ export class HttpCellarStore implements CellarStore {
         quantity: fields.quantity
       };
       putIfPresent(payload, 'producer', fields.producer);
-      putIfPresent(payload, 'vintage', fields.vintage === null ? null : String(fields.vintage));
+      putIfPresent(payload, 'vintage', fields.vintage);
       putIfPresent(payload, 'region', fields.region);
       putIfPresent(payload, 'country', fields.country);
       putIfPresent(payload, 'varietal', fields.varietal);
-      putIfPresent(payload, 'grape_variety', fields.varietal);
       putIfPresent(payload, 'price', fields.price);
       putIfPresent(payload, 'store', fields.store);
       putIfPresent(payload, 'purchase_date', fields.purchaseDate);
+      putIfPresent(payload, 'drink_by_date', fields.drinkByDate);
+      putIfPresent(payload, 'location', fields.location);
       putIfPresent(payload, 'notes', fields.notes);
 
       const headers = options.idempotencyKey === undefined ? undefined : { 'Idempotency-Key': upstreamIdempotencyKey('add', options.idempotencyKey) };
       const response = await this.request('POST', '/wines', { body: payload, headers });
-      return wineFromJson(response.body);
+      const wine = wineFromJson(response.body);
+      const unconfirmed: string[] = [];
+      if (fields.drinkByDate !== null && wine.drinkByDate === null) unconfirmed.push('drinkByDate');
+      if (fields.location !== null && wine.location === null) unconfirmed.push('location');
+      if (unconfirmed.length > 0) {
+        throw new Error(`HTTP wine API did not confirm saved fields: ${unconfirmed.join(', ')}; the request may have been saved, but the response omitted them`);
+      }
+      return wine;
     });
   }
 
@@ -156,7 +164,7 @@ export class HttpCellarStore implements CellarStore {
 
       const payload: JsonObject = {};
       const rating = optionalNumber(input.rating);
-      if (rating !== null) payload.rating = Math.trunc(rating);
+      if (rating !== null) payload.rating = rating;
       const notes = optionalString(input.notes);
       putIfPresent(payload, 'note', notes);
       putIfPresent(payload, 'consumed_at', optionalTimestamp(input.consumedAt, 'consumedAt'));
@@ -205,7 +213,8 @@ export class HttpCellarStore implements CellarStore {
       events.push(...page.events);
       total = page.total;
       offset += page.events.length;
-      if (total === null || offset >= total) break;
+      if (total !== null && offset >= total) break;
+      if (total === null && page.events.length < CONSUMPTION_PAGE_SIZE) break;
     }
     return wineId ? events.filter((event) => event.wineId === wineId) : events;
   }

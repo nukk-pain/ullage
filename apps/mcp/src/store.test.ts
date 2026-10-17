@@ -293,10 +293,15 @@ test('hold_wine stores an until date and re-holding updates instead of ignoring'
   assert.equal(extended.until, '2032-01-01');
   assert.equal(extended.reason, 'aging'); // omitted reason preserved
 
+  const reasonOnly = store.holdWine(wine.id, { reason: 'anniversary', idempotencyKey: 'h-reason' });
+  assert.equal(reasonOnly.until, '2032-01-01');
+  const cleared = store.holdWine(wine.id, { until: null, idempotencyKey: 'h-clear' });
+  assert.equal(cleared.until, null);
+
   // Identical re-hold is a no-op returning the current hold.
-  const same = store.holdWine(wine.id, { until: '2032-01-01', idempotencyKey: 'h-3' });
+  const same = store.holdWine(wine.id, { until: null, idempotencyKey: 'h-3' });
   assert.equal(same.id, hold.id);
-  assert.equal(same.until, '2032-01-01');
+  assert.equal(same.until, null);
 });
 
 test('schema upgrade adds wine_holds.until to a DB created before the column existed', async () => {
@@ -323,7 +328,7 @@ test('schema upgrade adds wine_holds.until to a DB created before the column exi
   await unlink(dbPath);
 });
 
-test('schema upgrade preserves a legacy tasting source image in imageUrl', async () => {
+test('schema upgrade extracts only the legacy image URL token and preserves existing imageUrl values', async () => {
   const { unlink } = await import('node:fs/promises');
   const { join } = await import('node:path');
   const { tmpdir } = await import('node:os');
@@ -334,19 +339,58 @@ test('schema upgrade preserves a legacy tasting source image in imageUrl', async
   const raw = new Database(dbPath);
   raw.exec(`CREATE TABLE tastings (
     id TEXT PRIMARY KEY, wine_name TEXT NOT NULL, vintage INTEGER, producer TEXT, region TEXT,
-    venue TEXT, food_pairing TEXT, rating REAL, price REAL, currency TEXT, notes TEXT,
+    venue TEXT, food_pairing TEXT, rating REAL, price REAL, currency TEXT, notes TEXT, image_url TEXT,
     tasted_at TEXT NOT NULL, created_at TEXT NOT NULL
   );`);
-  raw.prepare('INSERT INTO tastings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+  raw.prepare('INSERT INTO tastings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
     't-old', 'Barolo', 2016, null, null, null, null, 4.5, null, null,
-    'memorable\nSource image: https://example.test/legacy.jpg', '2026-01-01', '2026-01-01T00:00:00.000Z'
+    'memorable\nSource image: https://example.test/legacy.jpg trailing text', null, '2026-01-01', '2026-01-01T00:00:00.000Z'
   );
+  raw.prepare(`INSERT INTO tastings (id, wine_name, notes, image_url, tasted_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)`).run('t-existing', 'Existing image', 'Source image: ignored.example/page', 'https://example.test/kept.jpg', '2026-01-02', '2026-01-02T00:00:00.000Z');
   raw.close();
 
   const store = new SqliteCellarStore(dbPath);
-  assert.equal(store.listTastings({ source: 'external' })[0]?.imageUrl, 'https://example.test/legacy.jpg');
+  const tastings = store.listTastings({ source: 'external' });
+  assert.equal(tastings.find((tasting) => tasting.wineName === 'Barolo')?.imageUrl, 'https://example.test/legacy.jpg');
+  assert.equal(tastings.find((tasting) => tasting.wineName === 'Existing image')?.imageUrl, 'https://example.test/kept.jpg');
   store.close();
   await unlink(dbPath);
+});
+
+test('schema migration releases older duplicate active holds and keeps the newest hold', async () => {
+  const { rmSync } = await import('node:fs');
+  const { randomUUID } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'ullage-duplicate-holds-'));
+  const dbPath = join(dir, 'cellar.db');
+  const seed = new SqliteCellarStore(dbPath);
+  const wine = seed.addWine({ name: 'Duplicate hold wine', quantity: 3 });
+  seed.holdWine(wine.id, { reason: 'older' });
+  seed.close();
+
+  const legacy = new Database(dbPath);
+  legacy.exec('DROP INDEX IF EXISTS idx_holds_active_wine_unique');
+  const newestId = `hold-${randomUUID()}`;
+  legacy.prepare(`INSERT INTO wine_holds (id, wine_id, reason, until, created_at, released_at)
+    VALUES (?, ?, ?, ?, ?, NULL)`).run(newestId, wine.id, 'newest', null, '2099-01-01T00:00:00.000Z');
+  legacy.close();
+
+  const migrated = new SqliteCellarStore(dbPath);
+  try {
+    assert.deepEqual(migrated.listHolds().map((hold) => hold.id), [newestId]);
+    assert.equal(migrated.getWine(wine.id)?.hold?.id, newestId);
+    assert.equal(migrated.summary().bottle_count, 3);
+    const probe = new Database(dbPath);
+    try {
+      assert.equal(probe.prepare('SELECT COUNT(*) AS count FROM wine_holds WHERE wine_id = ? AND released_at IS NULL').get(wine.id)?.count, 1);
+      assert.equal(probe.prepare('SELECT COUNT(*) AS count FROM sqlite_master WHERE type = ? AND name = ?').get('index', 'idx_holds_active_wine_unique')?.count, 1);
+    } finally {
+      probe.close();
+    }
+  } finally {
+    migrated.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('two processes can concurrently migrate an old schema without losing data', async () => {

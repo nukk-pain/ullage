@@ -54,9 +54,25 @@ function migrateSqliteSchema(db: Database.Database): void {
   if (!tastingColumns.includes('image_url')) db.exec('ALTER TABLE tastings ADD COLUMN image_url TEXT');
   const idempotencyColumns = (db.prepare('PRAGMA table_info(idempotency_keys)').all() as { name: string }[]).map((c) => c.name);
   if (!idempotencyColumns.includes('hash_version')) db.exec('ALTER TABLE idempotency_keys ADD COLUMN hash_version INTEGER');
-  db.exec(`UPDATE tastings
-    SET image_url = trim(substr(notes, instr(notes, 'Source image: ') + length('Source image: ')))
-    WHERE image_url IS NULL AND notes LIKE '%Source image: %'`);
+  const duplicateHolds = db.prepare(`UPDATE wine_holds AS older
+    SET released_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE older.released_at IS NULL AND EXISTS (
+      SELECT 1 FROM wine_holds AS newer
+      WHERE newer.wine_id = older.wine_id AND newer.released_at IS NULL
+        AND (newer.created_at > older.created_at OR (newer.created_at = older.created_at AND newer.id > older.id))
+    )`);
+  duplicateHolds.run();
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_holds_active_wine_unique ON wine_holds(wine_id) WHERE released_at IS NULL');
+
+  const legacyImages = db.prepare(`SELECT id, notes FROM tastings
+    WHERE image_url IS NULL AND notes LIKE '%Source image: %'`).all() as { id: string; notes: string }[];
+  const updateImage = db.prepare('UPDATE tastings SET image_url = ? WHERE id = ? AND image_url IS NULL');
+  for (const tasting of legacyImages) {
+    const marker = 'Source image: ';
+    const suffix = tasting.notes.slice(tasting.notes.indexOf(marker) + marker.length).trim();
+    const imageUrl = suffix.split(/\s/u, 1)[0];
+    if (imageUrl) updateImage.run(imageUrl, tasting.id);
+  }
 }
 
 export function runIdempotent<T>(db: Database.Database, operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => []): T {

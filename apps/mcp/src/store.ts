@@ -251,7 +251,7 @@ export class SqliteCellarStore implements CellarStore {
       const wine = this.getWine(id);
       if (!wine) throw new Error(`No wine with id ${id}`);
       const reason = optionalString(input.reason);
-      const until = optionalDate(input.until);
+      const until = Object.hasOwn(input, 'until') ? optionalDate(input.until) : wine.hold?.until ?? null;
       if (wine.hold) {
         // Re-holding an already-held wine extends/updates it instead of silently ignoring the call.
         if (until === wine.hold.until && (reason === null || reason === wine.hold.reason)) return wine.hold;

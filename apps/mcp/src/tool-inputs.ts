@@ -69,7 +69,8 @@ export function batchImportInput(args: Record<string, unknown>, source: 'receipt
 }
 
 export function holdInput(args: Record<string, unknown>): HoldInput {
-  return { reason: args.reason, until: args.until, ...requiredWriteOptions(args) };
+  const input: HoldInput = { reason: args.reason, ...requiredWriteOptions(args) };
+  return Object.hasOwn(args, 'until') ? { ...input, until: args.until } : input;
 }
 
 export function releaseHoldInput(args: Record<string, unknown>): ReleaseHoldInput {

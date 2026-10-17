@@ -35,8 +35,8 @@ export function wineFromJson(value: unknown): Wine {
     notes: nullableString(object.notes),
     store: nullableString(object.store),
     purchaseDate: nullableString(object.purchaseDate),
-    drinkByDate: null,
-    location: null,
+    drinkByDate: nullableString(object.drinkByDate),
+    location: nullableString(object.location),
     createdAt: requireString(object.createdAt, 'wine.createdAt'),
     updatedAt: requireString(object.updatedAt, 'wine.updatedAt')
   };
@@ -67,8 +67,8 @@ function consumptionFromJson(value: unknown): ConsumptionEvent {
     id: requireString(object.id, 'consumption.id'),
     wineId: requireString(object.wineId, 'consumption.wineId'),
     quantity: numberOrDefault(object.quantity, 1),
-    rating: null,
-    notes: null,
+    rating: nullableNumber(object.rating),
+    notes: nullableString(object.notes),
     consumedAt: requireString(object.consumedAt, 'consumption.consumedAt')
   };
 }
