@@ -16,7 +16,7 @@ type FakeHTTPServer = {
   readonly close: () => Promise<void>;
 };
 
-type FakeHandler = (request: RecordedRequest) => { readonly status: number; readonly body: unknown };
+type FakeHandler = (request: RecordedRequest) => { readonly status: number; readonly body: unknown } | Promise<{ readonly status: number; readonly body: unknown }>;
 
 export const serviceWine = {
   id: 'wine-1', name: 'Chablis', vintage: '2020', producer: 'Raveneau',
@@ -48,7 +48,7 @@ export async function startFakeHTTPServer(handler: FakeHandler): Promise<FakeHTT
       body: await readBody(request)
     };
     requests.push(recordedRequest);
-    const fakeResponse = handler(recordedRequest);
+    const fakeResponse = await handler(recordedRequest);
     response.writeHead(fakeResponse.status, { 'content-type': 'application/json' });
     response.end(JSON.stringify(fakeResponse.body));
   };

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
 import test from 'node:test';
 import { HttpCellarStore } from './http-cellar-store.js';
 import { mappedWine, onlyRequest, requestSummary, serviceWine, startFakeHTTPServer } from './http-cellar-store.test-helper.js';
@@ -119,38 +118,22 @@ test('HttpCellarStore releases pre-POST validation state and retains state after
 });
 
 test('HttpCellarStore retains consume progress when a POST times out', async () => {
-  let applied = false;
   let postCount = 0;
-  const server = createServer((request, response) => {
-    request.on('error', () => undefined);
-    if (request.method === 'GET') {
-      request.resume();
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify(serviceWine));
-      return;
-    }
+  const server = await startFakeHTTPServer(async (request) => {
+    if (request.method === 'GET') return { status: 200, body: serviceWine };
     postCount += 1;
-    request.on('data', () => undefined);
-    request.on('end', () => {
-      applied = true;
-      if (postCount === 1) return;
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ sourceWine: { ...serviceWine, quantity: applied ? 1 : 2 } }));
-    });
+    if (postCount === 1) await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    return { status: 200, body: { sourceWine: { ...serviceWine, quantity: 1 } } };
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (address === null || typeof address === 'string') throw new Error('test server did not bind');
   try {
-    const store = new HttpCellarStore(`http://127.0.0.1:${address.port}`, {}, 30);
+    const store = new HttpCellarStore(server.baseUrl, {}, 30);
     await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'timeout-consume' }), /abort|timeout/i);
     assert.equal(store.consumeProgress.has('timeout-consume'), true);
     const result = await store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'timeout-consume' });
     assert.equal(result?.quantity, 1);
     assert.equal(postCount, 2);
   } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await server.close();
   }
 });
 

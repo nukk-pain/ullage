@@ -38,12 +38,12 @@ test('parseUllageConfig parses http backend URL, headers, and trailing slash nor
   assert.deepEqual(
     parseUllageConfig({
       ULLAGE_BACKEND: 'http',
-      ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080/api///',
+      ULLAGE_HTTP_BASE_URL: 'https://cellar.example/api///',
       ULLAGE_HTTP_HEADERS: '{"X-Test-Client":"custom-cli","Authorization":"Bearer example"}'
     }, '/tmp/default-cellar.db'),
     {
       backend: 'http',
-      baseUrl: 'http://127.0.0.1:8080/api',
+      baseUrl: 'https://cellar.example/api',
       headers: { 'X-Test-Client': 'custom-cli', Authorization: 'Bearer example' },
       timeoutMs: 10_000
     }
@@ -52,28 +52,28 @@ test('parseUllageConfig parses http backend URL, headers, and trailing slash nor
 
 test('parseUllageConfig defaults optional http headers to an empty object', () => {
   assert.deepEqual(
-    parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080' }, '/tmp/default-cellar.db'),
-    { backend: 'http', baseUrl: 'http://127.0.0.1:8080', headers: {}, timeoutMs: 10_000 }
+    parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example' }),
+    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000 }
   );
 });
 
 test('parseUllageConfig sets and validates the HTTP request timeout', () => {
   assert.deepEqual(
-    parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080' }, '/tmp/default-cellar.db'),
-    { backend: 'http', baseUrl: 'http://127.0.0.1:8080', headers: {}, timeoutMs: 10_000 }
+    parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example' }),
+    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000 }
   );
-  const custom = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080', ULLAGE_HTTP_TIMEOUT_MS: '2500' });
+  const custom = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example', ULLAGE_HTTP_TIMEOUT_MS: '2500' });
   assert.equal(custom.backend, 'http');
   if (custom.backend === 'http') assert.equal(custom.timeoutMs, 2500);
   for (const value of ['0', '-1', 'not-a-number', '300001']) {
-    assert.throws(() => parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080', ULLAGE_HTTP_TIMEOUT_MS: value }), /ULLAGE_HTTP_TIMEOUT_MS/);
+    assert.throws(() => parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example', ULLAGE_HTTP_TIMEOUT_MS: value }), /ULLAGE_HTTP_TIMEOUT_MS/);
   }
 });
 
 test('parseUllageConfig accepts ULLAGE_STORE as an alias for the http backend', () => {
   assert.deepEqual(
-    parseUllageConfig({ ULLAGE_STORE: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080' }, '/tmp/default-cellar.db'),
-    { backend: 'http', baseUrl: 'http://127.0.0.1:8080', headers: {}, timeoutMs: 10_000 }
+    parseUllageConfig({ ULLAGE_STORE: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example' }),
+    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000 }
   );
 });
 

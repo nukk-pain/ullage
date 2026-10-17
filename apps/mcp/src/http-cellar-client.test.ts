@@ -28,21 +28,17 @@ test('HttpCellarStore sends configured headers and keeps JSON request headers', 
 });
 
 test('sendJsonRequest enforces a timeout and caps response bytes', async () => {
-  const { createServer } = await import('node:http');
-  const server = createServer((request, response) => {
-    if (request.url === '/slow') return;
-    response.writeHead(200, { 'content-type': 'text/plain' });
-    response.end('x'.repeat(1_000_001));
+  const server = await startFakeHTTPServer(async (request) => {
+    if (request.path === '/slow') {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      return { status: 200, body: 'ok' };
+    }
+    return { status: 200, body: 'x'.repeat(1_000_001) };
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (address === null || typeof address === 'string') throw new Error('test server did not bind');
-  const baseUrl = `http://127.0.0.1:${address.port}`;
   try {
-    await assert.rejects(sendJsonRequest(new URL(`${baseUrl}/slow`), 'GET', { body: undefined, headers: {}, timeoutMs: 30 }), /abort|timeout/i);
-    await assert.rejects(sendJsonRequest(new URL(`${baseUrl}/large`), 'GET', { body: undefined, headers: {}, timeoutMs: 1_000 }), /response exceeded.*byte limit/i);
+    await assert.rejects(sendJsonRequest(new URL(`${server.baseUrl}/slow`), 'GET', { body: undefined, headers: {}, timeoutMs: 30 }), /abort|timeout/i);
+    await assert.rejects(sendJsonRequest(new URL(`${server.baseUrl}/large`), 'GET', { body: undefined, headers: {}, timeoutMs: 1_000 }), /response exceeded.*byte limit/i);
   } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await server.close();
   }
 });
