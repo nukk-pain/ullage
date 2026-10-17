@@ -118,7 +118,19 @@ export class SqliteCellarStore implements CellarStore {
         const forbidden = forbiddenAppendOnlyFields(patch);
         throw new Error(`append-only mode rejects update_wine; record consume, hold, release, or note events instead${forbidden.length ? `: ${forbidden.join(', ')}` : ''}`);
       }
-      const f = normalizeAddWine({ ...wineToInput(existing), ...patch });
+      const purchaseDateChanged = Object.hasOwn(patch, 'purchaseDate');
+      const drinkByDateChanged = Object.hasOwn(patch, 'drinkByDate');
+      const f = normalizeAddWine({
+        ...wineToInput(existing),
+        ...patch,
+        ...(purchaseDateChanged ? {} : { purchaseDate: null }),
+        ...(drinkByDateChanged ? {} : { drinkByDate: null })
+      });
+      const storedFields = {
+        ...f,
+        purchaseDate: purchaseDateChanged ? f.purchaseDate : existing.purchaseDate,
+        drinkByDate: drinkByDateChanged ? f.drinkByDate : existing.drinkByDate
+      };
       const now = new Date().toISOString();
       this.db
         .prepare(
@@ -127,7 +139,7 @@ export class SqliteCellarStore implements CellarStore {
              store=@store, purchase_date=@purchaseDate, drink_by_date=@drinkByDate, location=@location,
              updated_at=@updatedAt WHERE id=@id`
         )
-        .run({ ...f, id, updatedAt: now });
+        .run({ ...storedFields, id, updatedAt: now });
       this.logActivity('update', id, `Updated ${describe({ ...existing, ...f })}: ${changed.join(', ') || 'no fields'}`);
       return this.getWine(id);
     });
@@ -270,7 +282,7 @@ export class SqliteCellarStore implements CellarStore {
   }
 
   recommendWines(input: RecommendationInput): RecommendationResult {
-    const limit = Math.max(1, optionalInt(input.limit) ?? 5);
+    const limit = Math.max(1, optionalInt(input.limit, 'limit') ?? 5);
     const includeHeld = input.includeHeld === true;
     const wines = this.listWines().filter((wine) => wine.quantity > 0);
     const available = includeHeld ? wines : wines.filter((wine) => !wine.hold);
@@ -283,7 +295,7 @@ export class SqliteCellarStore implements CellarStore {
   }
 
   listActivity(limit = 50): ActivityEvent[] {
-    const safe = Math.max(1, optionalInt(limit) ?? 50);
+    const safe = Math.max(1, optionalInt(limit, 'limit') ?? 50);
     return (this.db.prepare('SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?').all(safe) as ActivityRow[]).map(rowToActivity);
   }
 

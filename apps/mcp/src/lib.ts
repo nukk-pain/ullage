@@ -5,6 +5,7 @@ export { ConfigError, createDefaultSqlitePath, parseFxConfig, parseUllageConfig,
 export { createCellarStore } from './store-factory.js';
 export { createUllageTools } from './tools.js';
 export { createFxService } from './fx.js';
+export { PartialConsumeError, UnsupportedHttpOperationError } from './http-cellar-store.js';
 export type { ExchangeRate, ExchangeRateLookup, FxConfig, FxService } from './fx.js';
 export type { McpTool, McpServerOptions } from './mcp.js';
 export { runMcpServer } from './mcp.js';

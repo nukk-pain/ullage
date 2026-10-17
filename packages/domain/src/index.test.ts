@@ -12,6 +12,7 @@ import {
   normalizeTastingQuery,
   optionalDate,
   optionalInt,
+  optionalTimestamp,
   requireName,
   resolveWineByName,
   type Tasting,
@@ -36,7 +37,7 @@ test('quantity defaults to 1 and empty optionals become null', () => {
 });
 
 test('explicit invalid quantities are rejected across add, update, consume, and import normalization', () => {
-  for (const quantity of ['typo', -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity]) {
+  for (const quantity of ['typo', -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, ' ', true, [], [3], {}]) {
     assert.throws(() => normalizeAddWine({ name: 'Barolo', quantity }), /quantity must be a non-negative safe integer/);
     assert.throws(() => normalizeBatchImport({
       idempotencyKey: 'invalid-quantity-import', source: 'receipt', items: [{ name: 'Barolo', quantity }]
@@ -45,6 +46,7 @@ test('explicit invalid quantities are rejected across add, update, consume, and 
   assert.throws(() => normalizeQuantity('typo'), /quantity must be a non-negative safe integer/);
   assert.equal(normalizeQuantity(undefined), 1);
   assert.equal(normalizeQuantity(0), 0);
+  assert.equal(normalizeQuantity('3'), 3);
 });
 
 test('requireName rejects blank names', () => {
@@ -54,14 +56,23 @@ test('requireName rejects blank names', () => {
 
 test('optionalDate normalizes to YYYY-MM-DD or null', () => {
   assert.equal(optionalDate('2026-03-14'), '2026-03-14');
+  assert.equal(optionalDate('2026-03-14 15:42'), '2026-03-14');
+  assert.equal(optionalDate('2026-03-14T10:00:00.000Z'), '2026-03-14');
   assert.equal(optionalDate(undefined), null);
   assert.throws(() => optionalDate('not a date'), /valid YYYY-MM-DD date/);
   assert.throws(() => optionalDate('2030-02-31'), /valid YYYY-MM-DD date/);
   assert.throws(() => optionalDate('2026-03-14suffix'), /valid YYYY-MM-DD date/);
+  assert.throws(() => optionalDate('2026-02-31 15:42'), /valid YYYY-MM-DD date/);
   assert.throws(() => normalizeBatchImport({
     idempotencyKey: 'invalid-date-import', source: 'receipt', purchaseDate: '2026-02-31', items: [{ name: 'Barolo' }]
   }), /valid YYYY-MM-DD date/);
   assert.equal(optionalInt('2019'), 2019);
+  assert.throws(() => optionalInt('nope', 'vintage'), /vintage must be a safe integer/);
+});
+
+test('optionalTimestamp normalizes real calendar dates with a space separator', () => {
+  assert.equal(optionalTimestamp('2026-03-14 15:42', 'consumedAt'), new Date('2026-03-14 15:42').toISOString());
+  assert.throws(() => optionalTimestamp('2026-02-31 15:42', 'consumedAt'), /consumedAt/);
 });
 
 test('domain idempotency and batch import contracts normalize receipt rows and reject unsafe inputs', () => {
@@ -196,4 +207,8 @@ test('resolveWineByName resolves exact, surfaces ambiguity, and splits a trailin
   assert.equal(resolveWineByName(wines, 'Rioja 2015').status, 'none');
   const wrongVintage = resolveWineByName([wineFixture({ id: 'w-4', name: 'Chablis', vintage: 2019 })], 'Chablis 2021');
   assert.equal(wrongVintage.status, 'none');
+  const yearName = resolveWineByName([wineFixture({ id: 'w-5', name: 'Barolo 2017', vintage: null })], 'Barolo 2017');
+  assert.equal(yearName.status, 'resolved');
+  assert.equal(yearName.status === 'resolved' && yearName.wine.id, 'w-5');
+  assert.equal(yearName.status === 'resolved' && yearName.matchKind, 'exact');
 });

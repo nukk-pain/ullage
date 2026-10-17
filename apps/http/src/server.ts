@@ -3,7 +3,7 @@
 // there is no second implementation of cellar rules here.
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { McpTool } from '@ullage/mcp';
+import { PartialConsumeError, UnsupportedHttpOperationError, type McpTool } from '@ullage/mcp';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -77,6 +77,14 @@ export function createToolHttpServer(options: ToolHttpServerOptions): Server {
       const result = await tool.handler(args);
       send(res, 200, { result: result ?? null });
     } catch (error) {
+      if (error instanceof PartialConsumeError || (error instanceof Error && error.name === 'PartialConsumeError')) {
+        send(res, 409, { error: error.message });
+        return;
+      }
+      if (error instanceof UnsupportedHttpOperationError || (error instanceof Error && error.name === 'UnsupportedHttpOperationError')) {
+        send(res, 501, { error: error.message });
+        return;
+      }
       // Domain rejections (hold in place, append-only violation, unknown id) are caller
       // errors and carry a message worth showing; anything else stays opaque.
       if (error instanceof Error && error.name === 'Error') {

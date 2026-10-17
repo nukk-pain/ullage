@@ -130,6 +130,12 @@ consume operation. If a consume fails after one or more successful bottle reques
 reports the confirmed partial count. A lost response can leave the outcome of the last request
 unknown, so safe retry requires persistent server-side support for the idempotency header.
 
+**Compatibility:** explicitly supplied `null` or empty quantities are rejected; omit `quantity` to
+use the default of one. Original idempotency keys remain local, while upstream `Idempotency-Key`
+headers contain a deterministic ASCII SHA-256 representation (and a per-bottle suffix for consume).
+The HTTP tools transport maps partial consumption to `409 Conflict` and unsupported HTTP-backend
+operations to `501 Not Implemented`, preserving each error message.
+
 Normal installs should leave backend variables unset. Alternate storage adapters are private or
 advanced integrations selected only by environment variable, and are not part of the zero-setup
 agent path.

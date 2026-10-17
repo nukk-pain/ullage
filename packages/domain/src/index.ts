@@ -235,10 +235,12 @@ export function optionalString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function optionalInt(value: unknown): number | null {
+export function optionalInt(value: unknown, field = 'value'): number | null {
   if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'number' && typeof value !== 'string') throw new Error(`${field} must be a safe integer`);
+  if (typeof value === 'string' && value.trim() === '') throw new Error(`${field} must be a safe integer`);
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed)) throw new Error('value must be a safe integer');
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${field} must be a safe integer`);
   return parsed;
 }
 
@@ -248,15 +250,16 @@ export function optionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function optionalDate(value: unknown): string | null {
+export function optionalDate(value: unknown, field = 'date'): string | null {
   if (value === undefined || value === null || value === '') return null;
   const s = optionalString(value);
-  if (s === null || !/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error('date must be a valid YYYY-MM-DD date');
-  const parsed = new Date(`${s}T00:00:00.000Z`);
-  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== s) {
-    throw new Error('date must be a valid YYYY-MM-DD date');
+  const datePart = s?.match(/^(\d{4}-\d{2}-\d{2})(?:[ T].+)?$/)?.[1];
+  if (datePart === undefined) throw new Error(`${field} must be a valid YYYY-MM-DD date`);
+  const parsed = new Date(`${datePart}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== datePart) {
+    throw new Error(`${field} must be a valid YYYY-MM-DD date`);
   }
-  return s;
+  return datePart;
 }
 
 export function normalizeQuantity(value: unknown, fallback = 1): number {
@@ -277,7 +280,7 @@ export function normalizeAddWine(input: AddWineInput): NormalizedWineFields {
   return {
     name: requireName(input.name),
     producer: optionalString(input.producer),
-    vintage: optionalInt(input.vintage),
+    vintage: optionalInt(input.vintage, 'vintage'),
     region: optionalString(input.region),
     country: optionalString(input.country),
     varietal: optionalString(input.varietal),
@@ -286,8 +289,8 @@ export function normalizeAddWine(input: AddWineInput): NormalizedWineFields {
     rating: null,
     notes: optionalString(input.notes),
     store: optionalString(input.store),
-    purchaseDate: optionalDate(input.purchaseDate),
-    drinkByDate: optionalDate(input.drinkByDate),
+    purchaseDate: optionalDate(input.purchaseDate, 'purchaseDate'),
+    drinkByDate: optionalDate(input.drinkByDate, 'drinkByDate'),
     location: optionalString(input.location)
   };
 }
@@ -299,7 +302,7 @@ export function normalizeIdempotencyKey(value: unknown): string {
 export function normalizeBatchImport(input: BatchImportInput): NormalizedBatchImport {
   const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
   if (!Array.isArray(input.items) || input.items.length === 0) throw new Error('items must include at least one wine row');
-  const purchaseDate = optionalDate(input.purchaseDate);
+  const purchaseDate = optionalDate(input.purchaseDate, 'purchaseDate');
   const seen = new Set<string>();
   const items = input.items.map((item, index) => {
     if (item.kind === 'non_wine') throw new Error(`non-wine receipt row at index ${index}`);
@@ -328,11 +331,11 @@ export function normalizeBatchImport(input: BatchImportInput): NormalizedBatchIm
 export function optionalTimestamp(value: unknown, field: string): string | null {
   const s = optionalString(value);
   if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${optionalDate(s)}T00:00:00.000Z`;
-  const datePart = /^(\d{4}-\d{2}-\d{2})T/.exec(s)?.[1];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${optionalDate(s, field)}T00:00:00.000Z`;
+  const datePart = /^(\d{4}-\d{2}-\d{2})[T ]/.exec(s)?.[1];
   if (datePart === undefined) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
-  optionalDate(datePart);
-  const parsed = new Date(s);
+  optionalDate(datePart, field);
+  const parsed = new Date(s.replace(' ', 'T'));
   if (Number.isNaN(parsed.getTime())) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
   return parsed.toISOString();
 }
@@ -364,11 +367,11 @@ function optionalStringArray(value: unknown): readonly string[] | null {
 // Validate + normalize a record_tasting payload. tastedAt is required so the
 // unified timeline stays sortable; the agent should ask the user for the date.
 export function normalizeRecordTasting(input: RecordTastingInput): NormalizedTastingFields {
-  const tastedAt = optionalDate(input.tastedAt);
+  const tastedAt = optionalDate(input.tastedAt, 'tastedAt');
   if (!tastedAt) throw new Error('tastedAt is required (YYYY-MM-DD)');
   return {
     wineName: requireName(input.name),
-    vintage: optionalInt(input.vintage),
+    vintage: optionalInt(input.vintage, 'vintage'),
     producer: optionalString(input.producer),
     region: optionalString(input.region),
     venue: optionalString(input.venue),
@@ -392,8 +395,8 @@ export function normalizeTastingQuery(input: TastingQuery = {}): NormalizedTasti
     query: optionalString(input.query),
     minRating: optionalNumber(input.minRating),
     venue: optionalString(input.venue),
-    limit: Math.max(1, optionalInt(input.limit) ?? 50),
-    offset: Math.max(0, optionalInt(input.offset) ?? 0)
+    limit: Math.max(1, optionalInt(input.limit, 'limit') ?? 50),
+    offset: Math.max(0, optionalInt(input.offset, 'offset') ?? 0)
   };
 }
 
@@ -433,18 +436,22 @@ export function filterWines(wines: readonly Wine[], query: unknown): Wine[] {
 const RESOLVE_CANDIDATE_LIMIT = 8;
 
 // Resolve a natural-language wine name to one cellar wine, or say why we cannot:
-// exact-name match wins; a lone fuzzy candidate resolves; several candidates are
-// returned for the agent to disambiguate with the user; a trailing vintage
-// ("Barolo 2016") is split and retried before giving up. In-stock wines rank first.
+// exact-name match wins; only when the full query has no candidates is a trailing
+// vintage split and required. A lone fuzzy candidate resolves; several candidates
+// are returned for disambiguation. In-stock wines rank first.
 export function resolveWineByName(wines: readonly Wine[], rawQuery: unknown): ResolveWineResult {
   const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
   if (!query) return { status: 'none', query };
 
-  const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
-  const effectiveQuery = vintageMatch?.[1] ?? query;
-  const requestedVintage = vintageMatch === null ? null : Number(vintageMatch[2]);
-  let candidates = filterWines(wines, effectiveQuery);
-  if (requestedVintage !== null) candidates = candidates.filter((wine) => wine.vintage === requestedVintage);
+  let effectiveQuery = query;
+  let candidates = filterWines(wines, query);
+  if (candidates.length === 0) {
+    const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
+    if (vintageMatch === null) return { status: 'none', query };
+    effectiveQuery = vintageMatch[1];
+    const requestedVintage = Number(vintageMatch[2]);
+    candidates = filterWines(wines, effectiveQuery).filter((wine) => wine.vintage === requestedVintage);
+  }
   if (candidates.length === 0) return { status: 'none', query };
 
   const ranked = [...candidates].sort((left, right) => {

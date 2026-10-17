@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import test from 'node:test';
-import { createCellarStore, createUllageTools, type CellarStore, type McpTool } from '@ullage/mcp';
+import { createCellarStore, createUllageTools, PartialConsumeError, UnsupportedHttpOperationError, type CellarStore, type McpTool } from '@ullage/mcp';
 import { createToolHttpServer } from './server.js';
 
 const TOKEN = 'test-token';
@@ -108,6 +108,27 @@ test('domain rejections surface as 400 with the domain message', async () => {
     const blocked = await fetch(`${harness.url}/tools/consume_wine`, auth({ id: wine.id, quantity: 1, idempotencyKey: 'h3' }));
     assert.equal(blocked.status, 400);
     assert.match((await blocked.json()).error, /on hold/i);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('partial and unsupported errors retain their messages with dedicated statuses', async () => {
+  const harness = await start([
+    { name: 'partial', description: 'partial', inputSchema: { type: 'object' }, handler: () => { throw new PartialConsumeError(1, 2, new Error('upstream')); } },
+    { name: 'unsupported', description: 'unsupported', inputSchema: { type: 'object' }, handler: () => { throw new UnsupportedHttpOperationError('importWines'); } },
+    { name: 'invalid', description: 'invalid', inputSchema: { type: 'object' }, handler: () => { throw new Error('bad quantity'); } }
+  ]);
+  try {
+    const partial = await fetch(`${harness.url}/tools/partial`, auth());
+    assert.equal(partial.status, 409);
+    assert.match((await partial.json()).error, /partially completed/);
+    const unsupported = await fetch(`${harness.url}/tools/unsupported`, auth());
+    assert.equal(unsupported.status, 501);
+    assert.match((await unsupported.json()).error, /unsupported-by-http-backend/);
+    const invalid = await fetch(`${harness.url}/tools/invalid`, auth());
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).error, 'bad quantity');
   } finally {
     await harness.close();
   }

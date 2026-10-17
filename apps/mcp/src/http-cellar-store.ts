@@ -24,6 +24,7 @@ import {
   type WineHold,
   type WriteOptions
 } from '@ullage/domain';
+import { createHash } from 'node:crypto';
 import type { CellarExport, CellarStore, CellarSummary } from './cellar-store.js';
 import { sendJsonRequest, type HttpHeaders, type JsonObject } from './http-cellar-client.js';
 import { consumptionPageFromJson, describeWine, hashPayload, putIfPresent, wineFromConsumeResponse, wineFromJson, wineListFromJson } from './http-cellar-mappers.js';
@@ -36,7 +37,7 @@ type StoreRequestOptions = {
   readonly headers?: HttpHeaders;
 };
 
-class PartialConsumeError extends Error {
+export class PartialConsumeError extends Error {
   readonly name = 'PartialConsumeError';
 
   constructor(readonly completedCount: number, readonly requestedCount: number, cause: unknown) {
@@ -84,7 +85,7 @@ export class HttpCellarStore implements CellarStore {
       putIfPresent(payload, 'purchase_date', fields.purchaseDate);
       putIfPresent(payload, 'notes', fields.notes);
 
-      const headers = options.idempotencyKey === undefined ? undefined : { 'Idempotency-Key': options.idempotencyKey };
+      const headers = options.idempotencyKey === undefined ? undefined : { 'Idempotency-Key': upstreamIdempotencyKey('add', options.idempotencyKey) };
       const response = await this.request('POST', '/wines', { body: payload, headers });
       return wineFromJson(response.body);
     });
@@ -142,10 +143,13 @@ export class HttpCellarStore implements CellarStore {
         return undefined;
       }
       const requested = normalizeQuantity(input.quantity, 1);
-      if (requested <= 0) return existing;
+      if (requested <= 0) throw new Error('quantity must be a positive safe integer');
       if (existing.quantity <= 0 && previousProgress === undefined) throw new Error(`No bottles of ${describeWine(existing)} left to open`);
       const targetCount = previousProgress?.requestedCount ?? Math.min(requested, existing.quantity);
       let completedCount = previousProgress?.completedCount ?? 0;
+      if (key !== undefined && previousProgress === undefined) {
+        this.consumeProgress.set(key, { payloadHash, requestedCount: targetCount, completedCount: 0 });
+      }
 
       const payload: JsonObject = {};
       const rating = optionalNumber(input.rating);
@@ -159,7 +163,7 @@ export class HttpCellarStore implements CellarStore {
         try {
           const headers = options.idempotencyKey === undefined
             ? undefined
-            : { 'Idempotency-Key': `${options.idempotencyKey}:${i + 1}` };
+            : { 'Idempotency-Key': upstreamIdempotencyKey('consume', options.idempotencyKey, i + 1) };
           const response = await this.request('POST', `/wines/${encodeURIComponent(id)}/consume`, {
             body: payload,
             okStatuses: [404],
@@ -282,4 +286,9 @@ function mergeHeaders(base: HttpHeaders, additional: HttpHeaders | undefined): H
     merged[name] = value;
   }
   return merged;
+}
+
+function upstreamIdempotencyKey(operation: 'add' | 'consume', originalKey: string, bottle?: number): string {
+  const digest = createHash('sha256').update(originalKey, 'utf8').digest('hex');
+  return `ullage-v1-${operation}-${digest}${bottle === undefined ? '' : `-${bottle}`}`;
 }

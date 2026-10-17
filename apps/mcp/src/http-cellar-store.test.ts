@@ -65,6 +65,17 @@ test('HttpCellarStore rejects zero quantity add before making requests', async (
   }
 });
 
+test('HttpCellarStore rejects zero quantity consume before making a consume request', async () => {
+  const server = await startFakeHTTPServer(() => ({ status: 200, body: serviceWine }));
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 0 }), /positive safe integer/);
+    assert.deepEqual(server.requests.map((request) => request.method), ['GET']);
+  } finally {
+    await server.close();
+  }
+});
+
 test('HttpCellarStore maps getWine from GET /wines/:id', async () => {
   const server = await startFakeHTTPServer(() => ({ status: 200, body: serviceWine }));
   try {
@@ -118,10 +129,9 @@ test('HttpCellarStore reports partial consumption and retries with stable upstre
   const server = await startFakeHTTPServer((request) => {
     if (request.method === 'GET') return { status: 200, body: { ...serviceWine, quantity } };
     const key = request.headers['idempotency-key'];
-    assert.equal(typeof key, 'string');
     const previous = processed.get(key);
     if (previous !== undefined) return { status: 200, body: previous };
-    if (key === 'consume-retry:2' && !failedSecondRequest) {
+    if (key?.endsWith('-2') && !failedSecondRequest) {
       failedSecondRequest = true;
       return { status: 503, body: { error: 'temporary failure' } };
     }
@@ -142,10 +152,78 @@ test('HttpCellarStore reports partial consumption and retries with stable upstre
 
     assert.equal(afterRetry?.quantity, 2);
     assert.equal(quantity, 2);
-    assert.deepEqual(
-      server.requests.filter((request) => request.method === 'POST').map((request) => request.headers['idempotency-key']),
-      ['consume-retry:1', 'consume-retry:2', 'consume-retry:2', 'consume-retry:3']
-    );
+    const headers = server.requests.filter((request) => request.method === 'POST').map((request) => request.headers['idempotency-key']);
+    assert.equal(headers.length, 4);
+    assert.equal(headers.every((key) => typeof key === 'string'), true);
+    assert.equal(headers[1], headers[2]);
+    assert.match(headers[0] ?? '', /^ullage-v1-consume-[a-f0-9]{64}-1$/);
+    assert.match(headers[3] ?? '', /^ullage-v1-consume-[a-f0-9]{64}-3$/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore encodes Unicode and long idempotency keys as stable ASCII headers', async () => {
+  let quantity = 3;
+  let addAttempts = 0;
+  let consumeAttempts = 0;
+  const server = await startFakeHTTPServer((request) => {
+    if (request.method === 'GET') return { status: 200, body: { ...serviceWine, quantity } };
+    if (request.path === '/wines') {
+      addAttempts += 1;
+      if (addAttempts === 1) return { status: 503, body: { error: 'retry' } };
+      return { status: 200, body: serviceWine };
+    }
+    consumeAttempts += 1;
+    if (consumeAttempts === 1) return { status: 503, body: { error: 'retry' } };
+    quantity -= 1;
+    return { status: 200, body: { sourceWine: { ...serviceWine, quantity } } };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    const key = '개봉-한글\n' + 'x'.repeat(400);
+    await assert.rejects(() => store.addWine({ name: 'A', quantity: 1 }, { idempotencyKey: key }));
+    await store.addWine({ name: 'A', quantity: 1 }, { idempotencyKey: key });
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: `${key}-consume` }));
+    await store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: `${key}-consume` });
+    const headers = server.requests.filter((request) => request.method === 'POST').map((request) => request.headers['idempotency-key']);
+    assert.equal(headers.length, 4);
+    assert.equal(headers[0], headers[1]);
+    assert.match(headers[0] ?? '', /^ullage-v1-add-[a-f0-9]{64}$/);
+    assert.match(headers[0] ?? '', /^[\x00-\x7F]+$/);
+    assert.equal(headers[2], headers[3]);
+    assert.match(headers[2] ?? '', /^ullage-v1-consume-[a-f0-9]{64}-1$/);
+    const asciiStore = new HttpCellarStore(server.baseUrl);
+    await asciiStore.addWine({ name: 'ASCII', quantity: 1 }, { idempotencyKey: 'ascii-key' });
+    assert.match(server.requests.at(-1)?.headers['idempotency-key'] ?? '', /^ullage-v1-add-[a-f0-9]{64}$/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore retries an uncertain first consume to the original clamped target', async () => {
+  let quantity = 2;
+  let posts = 0;
+  const processed = new Map<string, unknown>();
+  const server = await startFakeHTTPServer((request) => {
+    if (request.method === 'GET') return { status: 200, body: { ...serviceWine, quantity } };
+    posts += 1;
+    const key = request.headers['idempotency-key'] ?? '';
+    const previous = processed.get(key);
+    if (previous !== undefined) return { status: 200, body: previous };
+    quantity -= 1;
+    const body = { sourceWine: { ...serviceWine, quantity } };
+    processed.set(key, body);
+    return posts === 1 ? { status: 503, body: { error: 'uncertain' } } : { status: 200, body };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    const input = { quantity: 3 };
+    await assert.rejects(() => store.consumeWine('wine-1', input, { idempotencyKey: 'uncertain' }));
+    const afterRetry = await store.consumeWine('wine-1', input, { idempotencyKey: 'uncertain' });
+    assert.equal(afterRetry?.quantity, 0);
+    assert.equal(quantity, 0);
+    assert.equal(posts, 3);
   } finally {
     await server.close();
   }
@@ -160,7 +238,7 @@ test('HttpCellarStore resumes the original clamped consume count after a partial
     const key = request.headers['idempotency-key'];
     const previous = processed.get(key ?? '');
     if (previous !== undefined) return { status: 200, body: previous };
-    if (key === 'consume-clamped-retry:2' && !failedSecondRequest) {
+    if (key?.endsWith('-2') && !failedSecondRequest) {
       failedSecondRequest = true;
       return { status: 503, body: { error: 'temporary failure' } };
     }

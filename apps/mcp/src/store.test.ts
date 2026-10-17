@@ -57,10 +57,18 @@ test('update and consume reject explicitly invalid quantities without changing s
   const store = new SqliteCellarStore(':memory:');
   const wine = store.addWine({ name: 'Barolo', quantity: 10 });
 
+  for (const quantity of [' ', true, [], [3], {}]) {
+    assert.throws(() => store.addWine({ name: 'invalid', quantity }), /quantity must be a non-negative safe integer/);
+    assert.throws(() => store.updateWine(wine.id, { quantity }), /quantity must be a non-negative safe integer/);
+    assert.throws(() => store.consumeWine(wine.id, { quantity }), /quantity must be a non-negative safe integer/);
+    assert.throws(() => store.importWines({ idempotencyKey: `invalid-${String(quantity)}`, source: 'receipt', items: [{ name: 'invalid', quantity }] }), /quantity must be a non-negative safe integer/);
+  }
   assert.throws(() => store.updateWine(wine.id, { quantity: 'typo' }), /quantity must be a non-negative safe integer/);
   assert.throws(() => store.consumeWine(wine.id, { quantity: 1.5 }), /quantity must be a non-negative safe integer/);
   assert.equal(store.getWine(wine.id)?.quantity, 10);
   assert.equal(store.listConsumptions(wine.id).length, 0);
+  assert.equal(store.listWines().length, 1);
+  assert.equal(store.listActivity().length, 1);
 });
 
 test('add requires a name', () => {
@@ -371,6 +379,40 @@ test('import batch-level purchaseDate fills items and lands on the import record
   assert.equal(byName.get('Barolo')?.purchaseDate, '2026-07-15'); // filled down
   assert.equal(byName.get('Chablis')?.purchaseDate, '2026-07-01'); // not overridden
   assert.equal(store.exportJson().imports[0]?.receiptImageUrl, 'https://example.com/receipt.jpg');
+});
+
+test('legacy timestamp imports replay by the same key and request after reopening', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'ullage-legacy-replay-')), 'cellar.db');
+  const input = { idempotencyKey: 'old-timestamp-import', source: 'receipt' as const, purchaseDate: '2026-03-14 15:42', items: [{ name: 'Legacy', quantity: '3' }] };
+  const first = new SqliteCellarStore(path);
+  const original = first.importWines(input);
+  first.close();
+  const reopened = new SqliteCellarStore(path);
+  try {
+    const replay = reopened.importWines(input);
+    assert.equal(replay.id, original.id);
+    assert.equal(reopened.listWines().length, 1);
+  } finally {
+    reopened.close();
+  }
+});
+
+test('updating another field preserves an invalid legacy purchase date', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'ullage-legacy-date-')), 'cellar.db');
+  const initial = new SqliteCellarStore(path);
+  const wine = initial.addWine({ name: 'Legacy date', quantity: 2 });
+  initial.close();
+  const raw = new Database(path);
+  raw.prepare('UPDATE wines SET purchase_date = ? WHERE id = ?').run('2026-02-31', wine.id);
+  raw.close();
+  const reopened = new SqliteCellarStore(path);
+  try {
+    const updated = reopened.updateWine(wine.id, { notes: 'updated safely' });
+    assert.equal(updated?.notes, 'updated safely');
+    assert.equal(updated?.purchaseDate, '2026-02-31');
+  } finally {
+    reopened.close();
+  }
 });
 
 test('two stores on the same file interleave writes without lock errors', () => {

@@ -43,6 +43,11 @@ tools. The intelligence (reading labels, pairing, "what should I drink") is your
 working over that data. By default there is no server, no token, and no Docker — just a local
 SQLite adapter file you own.
 
+**Input and error compatibility:** explicitly supplied `null` or empty quantities are rejected;
+omit `quantity` to use the default of one. The HTTP adapter sends ASCII SHA-256 representations of
+idempotency keys upstream while keeping the original key for local replay checks. The HTTP tools
+transport returns `409` for partial consumption and `501` for operations unsupported by its backend.
+
 The public install path is intentionally independent of any external wine API. Experimental
 alternate storage adapters are selected only by environment variable and are not needed for normal
 agent setup.
