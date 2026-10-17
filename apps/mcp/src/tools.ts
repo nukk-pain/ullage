@@ -39,10 +39,11 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
   }
 
   async function importWithFx(args: Record<string, unknown>, source: 'label_photo' | 'receipt'): Promise<unknown> {
-    const replay = await replayBeforeFx('importWines', args.idempotencyKey, args);
+    const sourcePayload = { source, args };
+    const replay = await replayBeforeFx('importWines', args.idempotencyKey, sourcePayload);
     if (replay !== undefined) return replay;
     const converted = await convertImport(args);
-    return store.importWines({ ...batchImportInput(converted, source), idempotencyPayload: args });
+    return store.importWines({ ...batchImportInput(converted, source), idempotencyPayload: sourcePayload });
   }
 
   return [

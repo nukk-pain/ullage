@@ -45,7 +45,8 @@ test('parseUllageConfig parses http backend URL, headers, and trailing slash nor
       backend: 'http',
       baseUrl: 'https://cellar.example/api',
       headers: { 'X-Test-Client': 'custom-cli', Authorization: 'Bearer example' },
-      timeoutMs: 10_000
+      timeoutMs: 10_000,
+      maxResponseBytes: 32 * 1024 * 1024
     }
   );
 });
@@ -53,14 +54,14 @@ test('parseUllageConfig parses http backend URL, headers, and trailing slash nor
 test('parseUllageConfig defaults optional http headers to an empty object', () => {
   assert.deepEqual(
     parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example' }),
-    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000 }
+    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000, maxResponseBytes: 32 * 1024 * 1024 }
   );
 });
 
 test('parseUllageConfig sets and validates the HTTP request timeout', () => {
   assert.deepEqual(
     parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example' }),
-    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000 }
+    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000, maxResponseBytes: 32 * 1024 * 1024 }
   );
   const custom = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example', ULLAGE_HTTP_TIMEOUT_MS: '2500' });
   assert.equal(custom.backend, 'http');
@@ -70,10 +71,20 @@ test('parseUllageConfig sets and validates the HTTP request timeout', () => {
   }
 });
 
+test('parseUllageConfig sets and validates the HTTP response byte limit', () => {
+  const defaults = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example' });
+  assert.equal(defaults.backend === 'http' && defaults.maxResponseBytes, 32 * 1024 * 1024);
+  const custom = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example', ULLAGE_HTTP_MAX_RESPONSE_BYTES: '2000000' });
+  assert.equal(custom.backend === 'http' && custom.maxResponseBytes, 2_000_000);
+  for (const value of ['0', '-1', 'not-a-number', '1073741825']) {
+    assert.throws(() => parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example', ULLAGE_HTTP_MAX_RESPONSE_BYTES: value }), /ULLAGE_HTTP_MAX_RESPONSE_BYTES/);
+  }
+});
+
 test('parseUllageConfig accepts ULLAGE_STORE as an alias for the http backend', () => {
   assert.deepEqual(
     parseUllageConfig({ ULLAGE_STORE: 'http', ULLAGE_HTTP_BASE_URL: 'https://cellar.example' }),
-    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000 }
+    { backend: 'http', baseUrl: 'https://cellar.example', headers: {}, timeoutMs: 10_000, maxResponseBytes: 32 * 1024 * 1024 }
   );
 });
 

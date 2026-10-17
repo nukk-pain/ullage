@@ -14,6 +14,7 @@ export type UllageConfig =
       readonly baseUrl: string;
       readonly headers: HttpHeaders;
       readonly timeoutMs: number;
+      readonly maxResponseBytes: number;
     };
 
 export type UllageEnv = {
@@ -24,6 +25,7 @@ export type UllageEnv = {
   readonly ULLAGE_HTTP_BASE_URL?: string;
   readonly ULLAGE_HTTP_HEADERS?: string;
   readonly ULLAGE_HTTP_TIMEOUT_MS?: string;
+  readonly ULLAGE_HTTP_MAX_RESPONSE_BYTES?: string;
   readonly ULLAGE_HOME_CURRENCY?: string;
   readonly ULLAGE_FX_RATE_URL?: string;
 };
@@ -52,7 +54,7 @@ export function parseUllageConfig(env: UllageEnv, defaultSqlitePath = createDefa
     case LEGACY_BACKEND:
       throw new ConfigError(backendVariable.name, 'The openclaw backend was renamed to http; set ULLAGE_BACKEND=http and ULLAGE_HTTP_BASE_URL (and ULLAGE_HTTP_HEADERS if your server needs a client header).');
     case 'http':
-      return { backend: 'http', baseUrl: httpBaseUrl(env), headers: httpHeaders(env), timeoutMs: httpTimeoutMs(env) };
+      return { backend: 'http', baseUrl: httpBaseUrl(env), headers: httpHeaders(env), timeoutMs: httpTimeoutMs(env), maxResponseBytes: httpMaxResponseBytes(env) };
     default:
       throw new ConfigError(backendVariable.name, `Unsupported ${backendVariable.name} ${backend}. Supported backends: sqlite, http.`);
   }
@@ -125,6 +127,19 @@ function httpTimeoutMs(env: UllageEnv): number {
     throw new ConfigError('ULLAGE_HTTP_TIMEOUT_MS', 'ULLAGE_HTTP_TIMEOUT_MS must be an integer from 1 to 300000.');
   }
   return timeoutMs;
+}
+
+function httpMaxResponseBytes(env: UllageEnv): number {
+  const configured = env.ULLAGE_HTTP_MAX_RESPONSE_BYTES?.trim();
+  if (!configured) return 32 * 1024 * 1024;
+  if (!/^\d+$/u.test(configured)) {
+    throw new ConfigError('ULLAGE_HTTP_MAX_RESPONSE_BYTES', 'ULLAGE_HTTP_MAX_RESPONSE_BYTES must be an integer from 1 to 1073741824.');
+  }
+  const maxResponseBytes = Number(configured);
+  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 1_073_741_824) {
+    throw new ConfigError('ULLAGE_HTTP_MAX_RESPONSE_BYTES', 'ULLAGE_HTTP_MAX_RESPONSE_BYTES must be an integer from 1 to 1073741824.');
+  }
+  return maxResponseBytes;
 }
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {

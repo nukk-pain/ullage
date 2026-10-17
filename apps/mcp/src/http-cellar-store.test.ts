@@ -41,6 +41,7 @@ test('HttpCellarStore sends snake_case API fields when adding wine with POST /wi
       region: 'Burgundy',
       country: 'France',
       varietal: 'Chardonnay',
+      grape_variety: 'Chardonnay',
       price: 90,
       quantity: 2,
       notes: 'mineral',
@@ -49,6 +50,24 @@ test('HttpCellarStore sends snake_case API fields when adding wine with POST /wi
       drink_by_date: '2030-01-02',
       location: 'A1'
     });
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore sends grape_variety for servers that only persist that field', async () => {
+  const server = await startFakeHTTPServer((request) => {
+    const payload = JSON.parse(request.body) as Record<string, unknown>;
+    return { status: 201, body: { ...serviceWine, vintage: payload.vintage, varietal: null, grapeVariety: payload.grape_variety } };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    const added = await store.addWine({ name: 'Barolo', vintage: 2016, varietal: 'Nebbiolo' });
+    const payload = JSON.parse(onlyRequest(server.requests).body) as Record<string, unknown>;
+    assert.equal(payload.grape_variety, 'Nebbiolo');
+    assert.equal(payload.varietal, 'Nebbiolo');
+    assert.equal(payload.vintage, 2016);
+    assert.equal(added.varietal, 'Nebbiolo');
   } finally {
     await server.close();
   }

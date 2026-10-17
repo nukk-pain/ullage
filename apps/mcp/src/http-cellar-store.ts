@@ -65,7 +65,7 @@ export class HttpCellarStore implements CellarStore {
   private readonly idempotency = new Map<string, { readonly operation: string; readonly payloadHash: string; readonly result: Promise<unknown> }>();
   private readonly consumeProgress = new Map<string, { readonly payloadHash: string; readonly requestedCount: number; readonly completedCount: number }>();
 
-  constructor(baseUrl: string, headers: HttpHeaders = {}, private readonly timeoutMs = 10_000) {
+  constructor(baseUrl: string, headers: HttpHeaders = {}, private readonly timeoutMs = 10_000, private readonly maxResponseBytes = 32 * 1024 * 1024) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.headers = headers;
   }
@@ -85,6 +85,7 @@ export class HttpCellarStore implements CellarStore {
       putIfPresent(payload, 'region', fields.region);
       putIfPresent(payload, 'country', fields.country);
       putIfPresent(payload, 'varietal', fields.varietal);
+      putIfPresent(payload, 'grape_variety', fields.varietal);
       putIfPresent(payload, 'price', fields.price);
       putIfPresent(payload, 'store', fields.store);
       putIfPresent(payload, 'purchase_date', fields.purchaseDate);
@@ -189,6 +190,9 @@ export class HttpCellarStore implements CellarStore {
           });
           if (response.status === 404) {
             if (completedCount > 0) throw new PartialConsumeError(completedCount, targetCount, new Error('upstream wine disappeared during consumption'));
+            if (previousProgress !== undefined) {
+              throw new Error('HTTP wine API returned 404 while the prior consume outcome is unresolved; retry with the same idempotencyKey');
+            }
             return undefined;
           }
           latest = wineFromConsumeResponse(response.body);
@@ -279,7 +283,7 @@ export class HttpCellarStore implements CellarStore {
   private async request(method: 'GET' | 'POST', path: string, options: StoreRequestOptions = {}): Promise<{ readonly status: number; readonly body: unknown }> {
     const url = new URL(`${this.baseUrl}${path}`);
     const headers = mergeHeaders(this.headers, options.headers);
-    const response = await sendJsonRequest(url, method, { body: options.body, headers, timeoutMs: this.timeoutMs });
+    const response = await sendJsonRequest(url, method, { body: options.body, headers, timeoutMs: this.timeoutMs, maxResponseBytes: this.maxResponseBytes });
     if ((response.status < 200 || response.status >= 300) && !options.okStatuses?.includes(response.status)) {
       throw new HttpStatusError(response.status, method, path);
     }

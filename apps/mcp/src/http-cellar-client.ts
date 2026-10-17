@@ -15,9 +15,10 @@ export type JsonRequestOptions = {
   readonly body: JsonObject | undefined;
   readonly headers: HttpHeaders;
   readonly timeoutMs?: number;
+  readonly maxResponseBytes?: number;
 };
 
-export const HTTP_RESPONSE_MAX_BYTES = 1_000_000;
+export const HTTP_RESPONSE_MAX_BYTES = 32 * 1024 * 1024;
 
 export function sendJsonRequest(url: URL, method: HttpMethod, options: JsonRequestOptions): Promise<HttpResponse> {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -27,10 +28,11 @@ export function sendJsonRequest(url: URL, method: HttpMethod, options: JsonReque
   const headers = requestHeaders(bodyText, options.headers);
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
   const timeoutMs = options.timeoutMs ?? 10_000;
+  const maxResponseBytes = options.maxResponseBytes ?? HTTP_RESPONSE_MAX_BYTES;
 
   return new Promise<HttpResponse>((resolve, reject) => {
     const req = request(url, { method, headers, signal: AbortSignal.timeout(timeoutMs) }, (res) => {
-      collectResponse(res, HTTP_RESPONSE_MAX_BYTES).then(
+      collectResponse(res, maxResponseBytes).then(
         (text) => resolve({ status: res.statusCode ?? 0, body: parseResponseBody(text) }),
         reject
       );

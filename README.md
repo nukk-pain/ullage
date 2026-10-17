@@ -52,6 +52,13 @@ keeping the original key for local replay checks; the previous public release se
 The HTTP tools transport returns `409` for partial consumption and `501` for operations unsupported
 by its backend.
 
+For HTTP cellar adapters, `add_wine` sends the `varietal` and `grape_variety` fields with the same
+value for compatibility with servers that recognize either name, and sends `vintage` as a number.
+Set `ULLAGE_HTTP_MAX_RESPONSE_BYTES` to an integer from 1 through 1073741824 to change the maximum
+HTTP response size; it defaults to 33554432 bytes (32 MiB) so large cellar lists remain readable.
+If a write may have reached the server but its response was lost, retry with the same idempotency key;
+without persistent server-side idempotency support, the outcome may remain uncertain.
+
 **Date and time policy:** dates use exactly four-digit years from `0000` through `9999` and must be
 real Gregorian calendar dates. A date field that includes a time keeps the written calendar date.
 `consumedAt` timestamps with an explicit `Z` or numeric offset identify an instant; without an offset,
@@ -62,9 +69,12 @@ The public install path is intentionally independent of any external wine API. E
 alternate storage adapters are selected only by environment variable and are not needed for normal
 agent setup.
 
-Optional safety mode: set `ULLAGE_APPEND_ONLY=true` with SQLite to prevent direct edits to saved
-wine identity/purchase fields. Later changes should be recorded as consume, hold, release, or note
-events.
+Optional safety mode: set `ULLAGE_APPEND_ONLY=true` with SQLite to reject every `update_wine` change
+to an existing wine. Later changes should be recorded as consume, hold, release, or note events.
+
+Advanced HTTP adapter settings: set `ULLAGE_BACKEND=http`, `ULLAGE_HTTP_BASE_URL`, and optionally
+`ULLAGE_HTTP_HEADERS`, `ULLAGE_HTTP_TIMEOUT_MS` (1–300000; default 10000), and
+`ULLAGE_HTTP_MAX_RESPONSE_BYTES` (1–1073741824; default 33554432).
 
 ## License
 

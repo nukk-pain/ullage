@@ -8,6 +8,6 @@ export function createCellarStore(config: UllageConfig): CellarStore {
     case 'sqlite':
       return new SqliteCellarStore(config.dbPath, { appendOnly: config.appendOnly });
     case 'http':
-      return new HttpCellarStore(config.baseUrl, config.headers, config.timeoutMs);
+      return new HttpCellarStore(config.baseUrl, config.headers, config.timeoutMs, config.maxResponseBytes);
   }
 }

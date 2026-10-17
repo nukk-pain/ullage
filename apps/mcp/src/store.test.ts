@@ -354,7 +354,11 @@ test('schema upgrade extracts only the legacy image URL token and preserves exis
   const tastings = store.listTastings({ source: 'external' });
   assert.equal(tastings.find((tasting) => tasting.wineName === 'Barolo')?.imageUrl, 'https://example.test/legacy.jpg');
   assert.equal(tastings.find((tasting) => tasting.wineName === 'Existing image')?.imageUrl, 'https://example.test/kept.jpg');
+  store.recordTasting({ name: 'New tasting', notes: 'Source image: https://example.test/new.jpg', tastedAt: '2026-01-03' });
   store.close();
+  const reopened = new SqliteCellarStore(dbPath);
+  assert.equal(reopened.listTastings({ source: 'external' }).find((tasting) => tasting.wineName === 'New tasting')?.imageUrl, null);
+  reopened.close();
   await unlink(dbPath);
 });
 
@@ -414,6 +418,7 @@ test('two processes can concurrently migrate an old schema without losing data',
       ALTER TABLE wine_holds DROP COLUMN "until";
       ALTER TABLE tastings DROP COLUMN image_url;
       ALTER TABLE idempotency_keys DROP COLUMN hash_version;
+      DROP TABLE schema_meta;
     `);
     legacy.close();
 

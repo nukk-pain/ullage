@@ -36,9 +36,9 @@ cellar at `~/.ullage/cellar.db` (override with `ULLAGE_DB`; optional `ULLAGE_BAC
 Optional local safety mode: set `ULLAGE_APPEND_ONLY=true` if the user wants saved wine
 identity/purchase fields protected from direct edits. In that mode, record later changes with
 `consume_wine`, `hold_wine`, `release_hold`, or `add_note`.
-This mode protects identity and purchase fields only. `quantity` and wine-level `notes` remain
-editable through `update_wine`; use `consume_wine` when a bottle was opened and `add_note` for a
-dated tasting note.
+Append-only mode rejects every `update_wine` change to an existing wine, including identity,
+purchase fields, `quantity`, and wine-level `notes`. Use `consume_wine` when a bottle was opened and
+`add_note` for a dated tasting note.
 
 Do not require or configure any external wine API for a normal install. Alternate storage adapters
 are private/advanced integrations selected only by environment variable; leave them unset unless

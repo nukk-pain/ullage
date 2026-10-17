@@ -40,6 +40,7 @@ export function initializeSqliteSchema(db: Database.Database): void {
       tasted_at TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_tastings_time ON tastings(tasted_at);
+    CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
     migrateSqliteSchema(db);
   }).immediate();
@@ -65,14 +66,18 @@ function migrateSqliteSchema(db: Database.Database): void {
   duplicateHolds.run();
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_holds_active_wine_unique ON wine_holds(wine_id) WHERE released_at IS NULL');
 
-  const legacyImages = db.prepare(`SELECT id, notes FROM tastings
-    WHERE image_url IS NULL AND notes LIKE '%Source image: %'`).all() as { id: string; notes: string }[];
-  const updateImage = db.prepare('UPDATE tastings SET image_url = ? WHERE id = ? AND image_url IS NULL');
-  for (const tasting of legacyImages) {
-    const marker = 'Source image: ';
-    const suffix = tasting.notes.slice(tasting.notes.indexOf(marker) + marker.length).trim();
-    const imageUrl = suffix.split(/\s/u, 1)[0];
-    if (imageUrl) updateImage.run(imageUrl, tasting.id);
+  const imageBackfill = db.prepare('SELECT value FROM schema_meta WHERE key = ?').get('tasting-image-url-backfill-v1') as { value: string } | undefined;
+  if (!imageBackfill) {
+    const legacyImages = db.prepare(`SELECT id, notes FROM tastings
+      WHERE image_url IS NULL AND notes LIKE '%Source image: %'`).all() as { id: string; notes: string }[];
+    const updateImage = db.prepare('UPDATE tastings SET image_url = ? WHERE id = ? AND image_url IS NULL');
+    for (const tasting of legacyImages) {
+      const marker = 'Source image: ';
+      const suffix = tasting.notes.slice(tasting.notes.indexOf(marker) + marker.length).trim();
+      const imageUrl = suffix.split(/\s/u, 1)[0];
+      if (imageUrl) updateImage.run(imageUrl, tasting.id);
+    }
+    db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run('tasting-image-url-backfill-v1', 'complete');
   }
 }
 

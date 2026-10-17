@@ -37,7 +37,32 @@ test('sendJsonRequest enforces a timeout and caps response bytes', async () => {
   });
   try {
     await assert.rejects(sendJsonRequest(new URL(`${server.baseUrl}/slow`), 'GET', { body: undefined, headers: {}, timeoutMs: 30 }), /abort|timeout/i);
-    await assert.rejects(sendJsonRequest(new URL(`${server.baseUrl}/large`), 'GET', { body: undefined, headers: {}, timeoutMs: 1_000 }), /response exceeded.*byte limit/i);
+    await assert.rejects(sendJsonRequest(new URL(`${server.baseUrl}/large`), 'GET', { body: undefined, headers: {}, timeoutMs: 1_000, maxResponseBytes: 1_000_000 }), /response exceeded.*byte limit/i);
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore accepts a 1.15 MB wine list at the default response limit', async () => {
+  const wines = Array.from({ length: 180 }, (_, index) => ({ ...serviceWine, id: `wine-${index}`, notes: 'x'.repeat(6000) }));
+  const server = await startFakeHTTPServer(() => ({ status: 200, body: { wines, total: wines.length } }));
+  try {
+    const config = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: server.baseUrl });
+    const store = createCellarStore(config);
+    assert.equal((await store.listWines()).length, 180);
+    await store.close();
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore reports the configured response limit when a list is too large', async () => {
+  const server = await startFakeHTTPServer(() => ({ status: 200, body: { wines: [{ ...serviceWine, notes: 'x'.repeat(20_000) }], total: 1 } }));
+  try {
+    const config = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: server.baseUrl, ULLAGE_HTTP_MAX_RESPONSE_BYTES: '10000' });
+    const store = createCellarStore(config);
+    await assert.rejects(store.listWines(), /HTTP response exceeded 10000 byte limit/);
+    await store.close();
   } finally {
     await server.close();
   }

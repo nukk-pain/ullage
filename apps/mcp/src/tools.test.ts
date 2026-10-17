@@ -297,7 +297,8 @@ test('createUllageTools handlers await an injected store and preserve output sha
       purchaseDate: undefined, receiptImageUrl: undefined,
       items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }],
       idempotencyPayload: {
-        idempotencyKey: 'receipt-key-1', sourceId: 'receipt-1', items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }]
+        source: 'receipt',
+        args: { idempotencyKey: 'receipt-key-1', sourceId: 'receipt-1', items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }] }
       }
     }
   ]);
@@ -373,6 +374,24 @@ test('add and import replay saved FX writes before calling the exchange-rate con
   assert.deepEqual(importedReplay, imported);
   assert.equal(store.listWines().length, 2);
   store.close();
+});
+
+test('receipt and label imports reject reuse of one idempotency key in either order', async () => {
+  for (const [firstTool, secondTool] of [
+    ['import_receipt_wines', 'import_label_photo_wines'],
+    ['import_label_photo_wines', 'import_receipt_wines']
+  ] as const) {
+    const store = new SqliteCellarStore(':memory:');
+    const args = {
+      idempotencyKey: `cross-source-${firstTool}`,
+      sourceId: 'batch-1',
+      purchaseDate: '2026-01-02',
+      items: [{ name: 'Chablis', quantity: 1 }]
+    };
+    await tool(createUllageTools(store), firstTool).handler(args);
+    await assert.rejects(tool(createUllageTools(store), secondTool).handler(args), /different payload/);
+    store.close();
+  }
 });
 
 test('createUllageTools reports missing wines with current error text', async () => {

@@ -119,3 +119,32 @@ test('HttpCellarStore preserves consume progress through 503 then 4xx and replay
     }
   }
 });
+
+test('HttpCellarStore does not cache an unresolved consume as complete after POST 404', async () => {
+  let quantity = 2;
+  let postCount = 0;
+  const server = await startFakeHTTPServer((request) => {
+    if (request.method === 'GET') return { status: 200, body: { ...serviceWine, quantity } };
+    postCount += 1;
+    if (postCount === 1) {
+      quantity -= 1;
+      return { status: 503, body: { error: 'response lost after save' } };
+    }
+    if (postCount === 2) return { status: 404, body: { error: 'not found' } };
+    quantity -= 1;
+    return { status: 200, body: { sourceWine: { ...serviceWine, quantity } } };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    const input = { quantity: 1 };
+    const options = { idempotencyKey: 'consume-post-404-retry' };
+    await assert.rejects(store.consumeWine('wine-1', input, options), /HTTP 503/);
+    await assert.rejects(store.consumeWine('wine-1', input, options), /404.*prior consume outcome is unresolved/i);
+    const recovered = await store.consumeWine('wine-1', input, options);
+    assert.equal(recovered?.quantity, 0);
+    assert.equal(quantity, 0);
+    assert.equal(postCount, 3);
+  } finally {
+    await server.close();
+  }
+});
