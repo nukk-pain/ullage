@@ -12,7 +12,7 @@ export type ConsumptionRow = { id: string; wine_id: string; quantity: number; ra
 export type NoteRow = { id: string; wine_id: string; note: string; rating: number | null; created_at: string };
 export type ActivityRow = { id: string; action: string; wine_id: string | null; summary: string; created_at: string };
 export type HoldRow = { id: string; wine_id: string; reason: string | null; until: string | null; created_at: string; released_at: string | null };
-export type IdempotencyRow = { idempotency_key: string; operation: string; payload_hash: string; result_json: string; created_at: string };
+export type IdempotencyRow = { idempotency_key: string; operation: string; payload_hash: string; result_json: string; created_at: string; hash_version: number | null };
 export type ImportRow = { result_json: string };
 export type TastingRow = {
   id: string; wine_name: string; vintage: number | null; producer: string | null; region: string | null;

@@ -458,8 +458,8 @@ export function filterWines(wines: readonly Wine[], query: unknown): Wine[] {
 const RESOLVE_CANDIDATE_LIMIT = 8;
 
 // Resolve a natural-language wine name to one cellar wine, or say why we cannot:
-// exact-name match wins; only when the full query has no candidates is a trailing
-// vintage split and required. A lone fuzzy candidate resolves; several candidates
+// Exact-name match wins; when the full query has no exact match, a trailing
+// vintage is split and required. A lone fuzzy candidate resolves; several candidates
 // are returned for disambiguation. In-stock wines rank first.
 export function resolveWineByName(wines: readonly Wine[], rawQuery: unknown): ResolveWineResult {
   const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';

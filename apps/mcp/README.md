@@ -23,6 +23,10 @@ uses its own LLM (including vision for labels/receipts) and calls these tools:
 - `recommend_wines` — hold-aware recommendations
 - `export_cellar` — full cellar as JSON, including holds/imports/tastings
 
+HTTP consume retries retain each unfinished idempotency key's target and progress for the process
+lifetime. A key is cleared only after the requested consumption completes or validation fails before
+any POST is sent.
+
 The agent does label/receipt OCR itself (its vision LLM), asks for confirmation when needed, and
 calls the import tools with extracted fields. The server stores data; it does not run OCR.
 

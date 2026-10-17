@@ -178,7 +178,6 @@ export class HttpCellarStore implements CellarStore {
           });
           if (response.status === 404) {
             if (completedCount > 0) throw new PartialConsumeError(completedCount, targetCount, new Error('upstream wine disappeared during consumption'));
-            if (key !== undefined) this.consumeProgress.delete(key);
             return undefined;
           }
           latest = wineFromConsumeResponse(response.body);
@@ -186,9 +185,6 @@ export class HttpCellarStore implements CellarStore {
           if (key !== undefined) this.consumeProgress.set(key, { payloadHash, requestedCount: targetCount, completedCount });
         } catch (error) {
           if (error instanceof PartialConsumeError) throw error;
-          if (completedCount === 0 && key !== undefined && error instanceof HttpStatusError && error.status >= 400 && error.status < 500) {
-            this.consumeProgress.delete(key);
-          }
           if (completedCount > 0) throw new PartialConsumeError(completedCount, targetCount, error);
           throw error;
         }

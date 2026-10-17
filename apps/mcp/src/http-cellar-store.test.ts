@@ -76,7 +76,7 @@ test('HttpCellarStore rejects zero quantity consume before making a consume requ
   }
 });
 
-test('HttpCellarStore releases progress after validation and definite first-request failures', async () => {
+test('HttpCellarStore releases pre-POST validation state and retains state after a POST failure', async () => {
   let postStatus = 400;
   const server = await startFakeHTTPServer((request) => {
     if (request.method === 'GET') return { status: 200, body: serviceWine };
@@ -92,6 +92,10 @@ test('HttpCellarStore releases progress after validation and definite first-requ
 
     postStatus = 400;
     await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'definite-4xx' }));
+    assert.equal(store.consumeProgress.has('definite-4xx'), true);
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 2 }, { idempotencyKey: 'definite-4xx' }), /different payload/);
+    postStatus = 200;
+    await store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'definite-4xx' });
     assert.equal(store.consumeProgress.has('definite-4xx'), false);
   } finally {
     await server.close();

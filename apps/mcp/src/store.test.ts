@@ -454,6 +454,56 @@ test('legacy imports with invalid dates and null or empty quantities replay befo
   }
 });
 
+test('legacy import replay reconstructs bff7e55 drink dates and integer coercion', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'ullage-legacy-replay-')), 'cellar.db');
+  const store = new SqliteCellarStore(path);
+  const input = {
+    idempotencyKey: 'legacy-drink-by-vintage',
+    source: 'receipt' as const,
+    items: [{ name: 'Legacy drink by', vintage: true, drinkByDate: '2026-02-31' }]
+  };
+  const seeded = store.importWines({
+    ...input,
+    items: [{ name: 'Legacy drink by', vintage: 1 }]
+  });
+  const legacyPayload = {
+    idempotencyKey: input.idempotencyKey,
+    source: input.source,
+    sourceId: null,
+    purchaseDate: null,
+    receiptImageUrl: null,
+    items: [{
+      name: 'Legacy drink by', producer: null, vintage: 1, region: null, country: null, varietal: null,
+      price: null, quantity: 1, rating: null, notes: null, store: null, purchaseDate: null,
+      drinkByDate: '2026-02-31', location: null, itemKey: null
+    }]
+  };
+  const raw = new Database(path);
+  raw.prepare('UPDATE idempotency_keys SET payload_hash = ?, hash_version = NULL WHERE idempotency_key = ?').run(
+    hashPayload('importWines', legacyPayload), input.idempotencyKey
+  );
+  raw.close();
+  store.close();
+  const reopened = new SqliteCellarStore(path);
+  const replay = reopened.importWines(input);
+  assert.equal(replay.id, seeded.id);
+  assert.equal(reopened.listWines().length, 1);
+  reopened.close();
+});
+
+test('new idempotency records do not use legacy import hash fallback', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const input = { idempotencyKey: 'new-format-import', source: 'receipt' as const, items: [{ name: 'Equivalent', quantity: 1 }] };
+  const normalized = normalizeBatchImport(input);
+  const first = store.importWines(normalized);
+
+  assert.throws(() => store.importWines({ ...input, items: [{ name: 'Equivalent', quantity: null }] }), /different payload/);
+  assert.throws(() => store.importWines({ ...input, items: [{ name: ' Equivalent ', quantity: '1' }] }), /different payload/);
+  assert.equal(store.listWines().length, 1);
+  assert.equal(store.importWines(normalized).id, first.id);
+  store.close();
+});
+
 test('updating another field preserves an invalid legacy purchase date', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'ullage-legacy-date-')), 'cellar.db');
   const initial = new SqliteCellarStore(path);

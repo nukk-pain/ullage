@@ -351,34 +351,54 @@ export class SqliteCellarStore implements CellarStore {
 }
 
 function legacyBatchImportPayloads(input: BatchImportInput): readonly unknown[] {
-  try {
-    return [normalizeLegacyBatchImport(input)];
-  } catch {
-    return [];
-  }
+  return [normalizeLegacyBatchImport(input)];
 }
 
 function normalizeLegacyBatchImport(input: BatchImportInput): ReturnType<typeof normalizeBatchImport> {
-  const legacyDate = (value: unknown): string | null => {
-    if (value === undefined || value === null || value === '') return null;
-    if (typeof value !== 'string') throw new Error('invalid legacy date');
-    const date = value.trim().match(/^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/)?.[1];
-    if (!date) throw new Error('invalid legacy date');
-    return date;
+  const legacyString = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   };
+  const legacyInteger = (value: unknown): number | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  };
+  const legacyNumber = (value: unknown): number | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const legacyDate = (value: unknown): string | null => {
+    const string = legacyString(value);
+    return string ? /^(\d{4}-\d{2}-\d{2})/.exec(string)?.[1] ?? null : null;
+  };
+  if (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim()) throw new Error('idempotencyKey is required');
+  if (!Array.isArray(input.items) || input.items.length === 0) throw new Error('items must include at least one wine row');
   const purchaseDate = legacyDate(input.purchaseDate);
-  const items = input.items.map((item) => ({
-    ...item,
-    purchaseDate: undefined,
-    ...(item.quantity === null || item.quantity === '' ? { quantity: undefined } : {})
-  }));
-  const normalized = normalizeBatchImport({ ...input, purchaseDate: undefined, items });
+  const seen = new Set<string>();
+  const items = input.items.map((item, index) => {
+    if (item.kind === 'non_wine') throw new Error(`non-wine receipt row at index ${index}`);
+    if (typeof item.name !== 'string' || !item.name.trim()) throw new Error('name is required');
+    const itemKey = legacyString(item.itemKey);
+    if (itemKey !== null) {
+      if (seen.has(itemKey)) throw new Error(`duplicate itemKey ${itemKey}`);
+      seen.add(itemKey);
+    }
+    const quantity = legacyInteger(item.quantity);
+    return {
+      name: item.name.trim(), producer: legacyString(item.producer), vintage: legacyInteger(item.vintage),
+      region: legacyString(item.region), country: legacyString(item.country), varietal: legacyString(item.varietal),
+      price: legacyNumber(item.price), quantity: quantity === null ? 1 : Math.max(0, quantity), rating: null,
+      notes: legacyString(item.notes), store: legacyString(item.store),
+      purchaseDate: legacyDate(item.purchaseDate) ?? purchaseDate, drinkByDate: legacyDate(item.drinkByDate),
+      location: legacyString(item.location), itemKey
+    };
+  });
   return {
-    ...normalized,
+    idempotencyKey: input.idempotencyKey.trim(), source: input.source, sourceId: legacyString(input.sourceId),
     purchaseDate,
-    items: normalized.items.map((item, index) => ({
-      ...item,
-      purchaseDate: legacyDate(input.items[index]?.purchaseDate) ?? purchaseDate
-    }))
+    receiptImageUrl: legacyString(input.receiptImageUrl), items
   };
 }

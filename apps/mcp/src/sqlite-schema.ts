@@ -27,7 +27,7 @@ export function initializeSqliteSchema(db: Database.Database): void {
     );
     CREATE TABLE IF NOT EXISTS idempotency_keys (
       idempotency_key TEXT PRIMARY KEY, operation TEXT NOT NULL, payload_hash TEXT NOT NULL,
-      result_json TEXT NOT NULL, created_at TEXT NOT NULL
+      result_json TEXT NOT NULL, created_at TEXT NOT NULL, hash_version INTEGER
     );
     CREATE TABLE IF NOT EXISTS activity_log (
       id TEXT PRIMARY KEY, action TEXT NOT NULL, wine_id TEXT, summary TEXT NOT NULL, created_at TEXT NOT NULL
@@ -50,6 +50,8 @@ function migrateSqliteSchema(db: Database.Database): void {
   if (!holdColumns.includes('until')) db.exec('ALTER TABLE wine_holds ADD COLUMN until TEXT');
   const tastingColumns = (db.prepare('PRAGMA table_info(tastings)').all() as { name: string }[]).map((c) => c.name);
   if (!tastingColumns.includes('image_url')) db.exec('ALTER TABLE tastings ADD COLUMN image_url TEXT');
+  const idempotencyColumns = (db.prepare('PRAGMA table_info(idempotency_keys)').all() as { name: string }[]).map((c) => c.name);
+  if (!idempotencyColumns.includes('hash_version')) db.exec('ALTER TABLE idempotency_keys ADD COLUMN hash_version INTEGER');
   db.exec(`UPDATE tastings
     SET image_url = trim(substr(notes, instr(notes, 'Source image: ') + length('Source image: ')))
     WHERE image_url IS NULL AND notes LIKE '%Source image: %'`);
@@ -60,19 +62,32 @@ export function runIdempotent<T>(db: Database.Database, operation: string, key: 
   const payloadHash = hashPayload(operation, payload);
   const existing = db.prepare('SELECT * FROM idempotency_keys WHERE idempotency_key = ?').get(key) as IdempotencyRow | undefined;
   if (existing) {
-    if (existing.operation !== operation || (existing.payload_hash !== payloadHash && !legacyPayloads().some((legacyPayload) => hashPayload(operation, legacyPayload) === existing.payload_hash))) {
+    if (existing.operation !== operation) {
       throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+    }
+    if (existing.payload_hash !== payloadHash) {
+      if (existing.hash_version !== null && existing.hash_version !== undefined) {
+        throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+      }
+      let matchesLegacy = false;
+      try {
+        matchesLegacy = legacyPayloads().some((legacyPayload) => hashPayload(operation, legacyPayload) === existing.payload_hash);
+      } catch {
+        throw new Error(`idempotencyKey ${key} was stored by an earlier version and cannot be replayed`);
+      }
+      if (!matchesLegacy) throw new Error(`idempotencyKey ${key} was already used with a different payload`);
     }
     return decodeResult(existing.result_json) as T;
   }
   return db.transaction(() => {
     const result = work();
-    db.prepare('INSERT INTO idempotency_keys (idempotency_key, operation, payload_hash, result_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO idempotency_keys (idempotency_key, operation, payload_hash, result_json, created_at, hash_version) VALUES (?, ?, ?, ?, ?, ?)').run(
       key,
       operation,
       payloadHash,
       encodeResult(result),
-      new Date().toISOString()
+      new Date().toISOString(),
+      1
     );
     return result;
   })();

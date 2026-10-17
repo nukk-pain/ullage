@@ -85,3 +85,37 @@ test('HttpCellarStore coalesces concurrent idempotent consumeWine requests', asy
     await server.close();
   }
 });
+
+test('HttpCellarStore preserves consume progress through 503 then 4xx and replays to zero stock', async () => {
+  for (const retryStatus of [409, 400, 422, 429]) {
+    let quantity = 2;
+    let posts = 0;
+    const saved = new Map<string, unknown>();
+    const server = await startFakeHTTPServer((request) => {
+      if (request.method === 'GET') return { status: 200, body: { ...serviceWine, quantity } };
+      posts += 1;
+      const key = request.headers['idempotency-key'];
+      if (posts === 2) return { status: retryStatus, body: { error: 'not processed' } };
+      const replay = saved.get(String(key));
+      if (replay !== undefined) return { status: 200, body: replay };
+      const result = { sourceWine: { ...serviceWine, quantity: --quantity } };
+      saved.set(String(key), result);
+      return { status: posts === 1 ? 503 : 200, body: result };
+    });
+    try {
+      const store = new HttpCellarStore(server.baseUrl);
+      const input = { quantity: 3 };
+      const options = { idempotencyKey: 'consume-uncertain-fourxx' };
+
+      await assert.rejects(store.consumeWine('wine-1', input, options), /HTTP 503/);
+      await assert.rejects(store.consumeWine('wine-1', input, options), new RegExp(`HTTP ${retryStatus}`));
+      const result = await store.consumeWine('wine-1', input, options);
+
+      assert.equal(result?.quantity, 0);
+      assert.equal(quantity, 0);
+      assert.equal(server.requests.filter((request) => request.method === 'POST').length, 4);
+    } finally {
+      await server.close();
+    }
+  }
+});
