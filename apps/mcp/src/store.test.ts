@@ -53,6 +53,16 @@ test('update_wine changes only provided fields', () => {
   assert.equal(updated?.vintage, 2021); // unchanged
 });
 
+test('update and consume reject explicitly invalid quantities without changing stock', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const wine = store.addWine({ name: 'Barolo', quantity: 10 });
+
+  assert.throws(() => store.updateWine(wine.id, { quantity: 'typo' }), /quantity must be a non-negative safe integer/);
+  assert.throws(() => store.consumeWine(wine.id, { quantity: 1.5 }), /quantity must be a non-negative safe integer/);
+  assert.equal(store.getWine(wine.id)?.quantity, 10);
+  assert.equal(store.listConsumptions(wine.id).length, 0);
+});
+
 test('add requires a name', () => {
   const store = new SqliteCellarStore(':memory:');
   assert.throws(() => store.addWine({ name: '   ' }), /name is required/);

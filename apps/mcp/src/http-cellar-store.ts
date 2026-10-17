@@ -33,7 +33,16 @@ const CONSUMPTION_PAGE_SIZE = 100;
 type StoreRequestOptions = {
   readonly body?: JsonObject;
   readonly okStatuses?: readonly number[];
+  readonly headers?: HttpHeaders;
 };
+
+class PartialConsumeError extends Error {
+  readonly name = 'PartialConsumeError';
+
+  constructor(readonly completedCount: number, readonly requestedCount: number, cause: unknown) {
+    super(`consumeWine partially completed (${completedCount}/${requestedCount} bottles); retry with the same idempotencyKey; safe replay requires persistent HTTP server support for Idempotency-Key`, { cause });
+  }
+}
 
 export class UnsupportedHttpOperationError extends Error {
   readonly name = 'UnsupportedHttpOperationError';
@@ -47,6 +56,7 @@ export class HttpCellarStore implements CellarStore {
   private readonly baseUrl: string;
   private readonly headers: HttpHeaders;
   private readonly idempotency = new Map<string, { readonly operation: string; readonly payloadHash: string; readonly result: Promise<unknown> }>();
+  private readonly consumeProgress = new Map<string, { readonly payloadHash: string; readonly requestedCount: number; readonly completedCount: number }>();
 
   constructor(baseUrl: string, headers: HttpHeaders = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
@@ -74,7 +84,8 @@ export class HttpCellarStore implements CellarStore {
       putIfPresent(payload, 'purchase_date', fields.purchaseDate);
       putIfPresent(payload, 'notes', fields.notes);
 
-      const response = await this.request('POST', '/wines', { body: payload });
+      const headers = options.idempotencyKey === undefined ? undefined : { 'Idempotency-Key': options.idempotencyKey };
+      const response = await this.request('POST', '/wines', { body: payload, headers });
       return wineFromJson(response.body);
     });
   }
@@ -117,12 +128,24 @@ export class HttpCellarStore implements CellarStore {
 
   async consumeWine(id: string, input: ConsumeInput, options: WriteOptions = {}): Promise<Wine | undefined> {
     return this.idempotent('consumeWine', options.idempotencyKey, { id, input }, async () => {
+      const key = options.idempotencyKey;
+      const payloadHash = hashPayload('consumeWine', { id, input });
+      const previousProgress = key === undefined ? undefined : this.consumeProgress.get(key);
+      if (previousProgress && previousProgress.payloadHash !== payloadHash) {
+        throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+      }
       const existing = await this.getWine(id);
-      if (!existing) return undefined;
+      if (!existing) {
+        if (previousProgress && previousProgress.completedCount > 0) {
+          throw new PartialConsumeError(previousProgress.completedCount, previousProgress.requestedCount, new Error('upstream wine disappeared during consumption'));
+        }
+        return undefined;
+      }
       const requested = normalizeQuantity(input.quantity, 1);
       if (requested <= 0) return existing;
-      if (existing.quantity <= 0) throw new Error(`No bottles of ${describeWine(existing)} left to open`);
-      const consumed = Math.min(requested, existing.quantity);
+      if (existing.quantity <= 0 && previousProgress === undefined) throw new Error(`No bottles of ${describeWine(existing)} left to open`);
+      const targetCount = previousProgress?.requestedCount ?? Math.min(requested, existing.quantity);
+      let completedCount = previousProgress?.completedCount ?? 0;
 
       const payload: JsonObject = {};
       const rating = optionalNumber(input.rating);
@@ -132,11 +155,30 @@ export class HttpCellarStore implements CellarStore {
       putIfPresent(payload, 'consumed_at', optionalTimestamp(input.consumedAt, 'consumedAt'));
 
       let latest: Wine = existing;
-      for (let i = 0; i < consumed; i += 1) {
-        const response = await this.request('POST', `/wines/${encodeURIComponent(id)}/consume`, { body: payload, okStatuses: [404] });
-        if (response.status === 404) return undefined;
-        latest = wineFromConsumeResponse(response.body);
+      for (let i = completedCount; i < targetCount; i += 1) {
+        try {
+          const headers = options.idempotencyKey === undefined
+            ? undefined
+            : { 'Idempotency-Key': `${options.idempotencyKey}:${i + 1}` };
+          const response = await this.request('POST', `/wines/${encodeURIComponent(id)}/consume`, {
+            body: payload,
+            okStatuses: [404],
+            headers
+          });
+          if (response.status === 404) {
+            if (completedCount > 0) throw new PartialConsumeError(completedCount, targetCount, new Error('upstream wine disappeared during consumption'));
+            return undefined;
+          }
+          latest = wineFromConsumeResponse(response.body);
+          completedCount = i + 1;
+          if (key !== undefined) this.consumeProgress.set(key, { payloadHash, requestedCount: targetCount, completedCount });
+        } catch (error) {
+          if (error instanceof PartialConsumeError) throw error;
+          if (completedCount > 0) throw new PartialConsumeError(completedCount, targetCount, error);
+          throw error;
+        }
       }
+      if (key !== undefined) this.consumeProgress.delete(key);
       return latest;
     });
   }
@@ -204,7 +246,8 @@ export class HttpCellarStore implements CellarStore {
 
   private async request(method: 'GET' | 'POST', path: string, options: StoreRequestOptions = {}): Promise<{ readonly status: number; readonly body: unknown }> {
     const url = new URL(`${this.baseUrl}${path}`);
-    const response = await sendJsonRequest(url, method, { body: options.body, headers: this.headers });
+    const headers = mergeHeaders(this.headers, options.headers);
+    const response = await sendJsonRequest(url, method, { body: options.body, headers });
     if ((response.status < 200 || response.status >= 300) && !options.okStatuses?.includes(response.status)) {
       throw new Error(`HTTP wine API ${method} ${path} failed with HTTP ${response.status}: upstream error response omitted`);
     }
@@ -228,4 +271,15 @@ export class HttpCellarStore implements CellarStore {
       throw error;
     }
   }
+}
+
+function mergeHeaders(base: HttpHeaders, additional: HttpHeaders | undefined): HttpHeaders {
+  const merged: Record<string, string> = { ...base };
+  for (const [name, value] of Object.entries(additional ?? {})) {
+    for (const existingName of Object.keys(merged)) {
+      if (existingName.toLowerCase() === name.toLowerCase()) delete merged[existingName];
+    }
+    merged[name] = value;
+  }
+  return merged;
 }

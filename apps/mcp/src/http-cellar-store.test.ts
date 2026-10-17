@@ -111,6 +111,100 @@ test('HttpCellarStore consumes quantity two as two POST /wines/:id/consume reque
   }
 });
 
+test('HttpCellarStore reports partial consumption and retries with stable upstream idempotency keys', async () => {
+  let quantity = 5;
+  let failedSecondRequest = false;
+  const processed = new Map<string, unknown>();
+  const server = await startFakeHTTPServer((request) => {
+    if (request.method === 'GET') return { status: 200, body: { ...serviceWine, quantity } };
+    const key = request.headers['idempotency-key'];
+    assert.equal(typeof key, 'string');
+    const previous = processed.get(key);
+    if (previous !== undefined) return { status: 200, body: previous };
+    if (key === 'consume-retry:2' && !failedSecondRequest) {
+      failedSecondRequest = true;
+      return { status: 503, body: { error: 'temporary failure' } };
+    }
+    quantity -= 1;
+    const body = { sourceWine: { ...serviceWine, quantity } };
+    processed.set(key, body);
+    return { status: 200, body };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    const input = { quantity: 3 };
+
+    await assert.rejects(
+      () => store.consumeWine('wine-1', input, { idempotencyKey: 'consume-retry' }),
+      /partially completed \(1\/3 bottles\)/
+    );
+    const afterRetry = await store.consumeWine('wine-1', input, { idempotencyKey: 'consume-retry' });
+
+    assert.equal(afterRetry?.quantity, 2);
+    assert.equal(quantity, 2);
+    assert.deepEqual(
+      server.requests.filter((request) => request.method === 'POST').map((request) => request.headers['idempotency-key']),
+      ['consume-retry:1', 'consume-retry:2', 'consume-retry:2', 'consume-retry:3']
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore resumes the original clamped consume count after a partial failure', async () => {
+  let quantity = 2;
+  let failedSecondRequest = false;
+  const processed = new Map<string, unknown>();
+  const server = await startFakeHTTPServer((request) => {
+    if (request.method === 'GET') return { status: 200, body: { ...serviceWine, quantity } };
+    const key = request.headers['idempotency-key'];
+    const previous = processed.get(key ?? '');
+    if (previous !== undefined) return { status: 200, body: previous };
+    if (key === 'consume-clamped-retry:2' && !failedSecondRequest) {
+      failedSecondRequest = true;
+      return { status: 503, body: { error: 'temporary failure' } };
+    }
+    quantity -= 1;
+    const body = { sourceWine: { ...serviceWine, quantity } };
+    processed.set(key ?? '', body);
+    return { status: 200, body };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    const input = { quantity: 3 };
+
+    await assert.rejects(
+      () => store.consumeWine('wine-1', input, { idempotencyKey: 'consume-clamped-retry' }),
+      /partially completed \(1\/2 bottles\)/
+    );
+    const afterRetry = await store.consumeWine('wine-1', input, { idempotencyKey: 'consume-clamped-retry' });
+
+    assert.equal(afterRetry?.quantity, 0);
+    assert.equal(quantity, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore reports a partial consume when the upstream deletes the wine mid-request', async () => {
+  let postCount = 0;
+  const server = await startFakeHTTPServer((request) => {
+    if (request.method === 'GET') return { status: 200, body: serviceWine };
+    postCount += 1;
+    if (postCount === 2) return { status: 404, body: { error: 'missing' } };
+    return { status: 200, body: { sourceWine: { ...serviceWine, quantity: 1 } } };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    await assert.rejects(
+      () => store.consumeWine('wine-1', { quantity: 2 }, { idempotencyKey: 'consume-mid-delete' }),
+      /partially completed \(1\/2 bottles\)/
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test('HttpCellarStore clamps over-consume requests to available quantity like SQLite', async () => {
   const oneBottle = { ...serviceWine, quantity: 1 };
   const consumed = { ...serviceWine, quantity: 0, updatedAt: '2026-01-08T00:00:00.000Z' };

@@ -113,14 +113,23 @@ contract:
 `grapeVariety`), `price`, `quantity`, `rating`, `notes`, `store`, and `purchaseDate`. Consumption
 rows must include non-empty `id`, `wineId`, and `consumedAt`; `quantity` defaults to one if omitted.
 The client filters `GET /wines` results locally. A consume quantity greater than one becomes
-sequential `POST /wines/{id}/consume` requests. MCP `idempotencyKey` values remain client-side
-deduplication keys and are not sent to the HTTP server.
+sequential `POST /wines/{id}/consume` requests. MCP `idempotencyKey` values are sent to the HTTP
+server as `Idempotency-Key` headers; each bottle request uses a stable per-bottle key derived from
+the supplied key.
 
 The client treats `404` as not found only for the wine lookup and consume requests. Other non-2xx
 responses fail the operation, and the error omits the server response body. Successful responses
 must match the JSON shapes above. Operations that require import, update, tasting, note, hold,
 recommendation, activity, or export semantics are unsupported by this adapter and fail before
 making an HTTP request.
+
+The client coalesces and replays completed requests within the current process. The HTTP server must
+honor and persist `Idempotency-Key` for per-request deduplication across restarts or clients; the
+adapter cannot guarantee deduplication when that contract is absent. The adapter also cannot recover
+the original clamped bottle count after a restart because the HTTP contract has no atomic multi-bottle
+consume operation. If a consume fails after one or more successful bottle requests, the client
+reports the confirmed partial count. A lost response can leave the outcome of the last request
+unknown, so safe retry requires persistent server-side support for the idempotency header.
 
 Normal installs should leave backend variables unset. Alternate storage adapters are private or
 advanced integrations selected only by environment variable, and are not part of the zero-setup

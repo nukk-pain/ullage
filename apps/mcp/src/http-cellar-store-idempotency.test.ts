@@ -14,6 +14,7 @@ test('HttpCellarStore replays idempotent addWine without duplicate upstream requ
     assert.deepEqual(replay, first);
     await assert.rejects(async () => store.addWine({ name: 'Different Chablis', quantity: 1 }, { idempotencyKey: 'http-add-1' }), /different payload/);
     assert.deepEqual(requestSummary(server.requests), [{ method: 'POST', path: '/wines' }]);
+    assert.equal(server.requests[0]?.headers['idempotency-key'], 'http-add-1');
   } finally {
     await server.close();
   }

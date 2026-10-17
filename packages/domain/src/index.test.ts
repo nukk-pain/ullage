@@ -8,6 +8,7 @@ import {
   normalizeBatchImport,
   normalizeIdempotencyKey,
   normalizeRecordTasting,
+  normalizeQuantity,
   normalizeTastingQuery,
   optionalDate,
   optionalInt,
@@ -32,6 +33,18 @@ test('quantity defaults to 1 and empty optionals become null', () => {
   assert.equal(w.quantity, 1);
   assert.equal(w.producer, null);
   assert.equal(w.vintage, null);
+});
+
+test('explicit invalid quantities are rejected across add, update, consume, and import normalization', () => {
+  for (const quantity of ['typo', -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity]) {
+    assert.throws(() => normalizeAddWine({ name: 'Barolo', quantity }), /quantity must be a non-negative safe integer/);
+    assert.throws(() => normalizeBatchImport({
+      idempotencyKey: 'invalid-quantity-import', source: 'receipt', items: [{ name: 'Barolo', quantity }]
+    }), /quantity must be a non-negative safe integer/);
+  }
+  assert.throws(() => normalizeQuantity('typo'), /quantity must be a non-negative safe integer/);
+  assert.equal(normalizeQuantity(undefined), 1);
+  assert.equal(normalizeQuantity(0), 0);
 });
 
 test('requireName rejects blank names', () => {

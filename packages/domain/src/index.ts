@@ -238,7 +238,8 @@ export function optionalString(value: unknown): string | null {
 export function optionalInt(value: unknown): number | null {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  if (!Number.isSafeInteger(parsed)) throw new Error('value must be a safe integer');
+  return parsed;
 }
 
 export function optionalNumber(value: unknown): number | null {
@@ -256,8 +257,16 @@ export function optionalDate(value: unknown): string | null {
 }
 
 export function normalizeQuantity(value: unknown, fallback = 1): number {
-  const n = optionalInt(value);
-  return n === null ? fallback : Math.max(0, n);
+  if (value === undefined) return fallback;
+  let n: number | null;
+  try {
+    n = optionalInt(value);
+  } catch (error) {
+    if (error instanceof Error) throw new Error('quantity must be a non-negative safe integer', { cause: error });
+    throw error;
+  }
+  if (n === null || n < 0) throw new Error('quantity must be a non-negative safe integer');
+  return n;
 }
 
 // Validate + normalize an add_wine payload into column values.
