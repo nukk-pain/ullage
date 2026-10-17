@@ -73,7 +73,8 @@ Verify the install by calling `cellar_summary`.
   again on a held wine updates its date. Do not call `consume_wine` on held wine unless the user
   explicitly confirms releasing the hold first.
 - When the user opened a bottle earlier ("we drank it yesterday"), pass `consumedAt` (YYYY-MM-DD)
-  to `consume_wine` so the history carries the real date.
+  to `consume_wine` so the history carries the real date. A timestamp without an explicit timezone
+  uses the runtime's local timezone; include `Z` or an offset to specify an instant.
 - When the user names a wine ("the Barolo", "Chablis 2020"), call `resolve_wine` first; on an
   `ambiguous` result, ask the user to pick a candidate before any write.
 - When the user drank a wine **outside the cellar** (restaurant, bar, a friend's bottle), record

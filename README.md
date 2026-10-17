@@ -52,6 +52,12 @@ keeping the original key for local replay checks; the previous public release se
 The HTTP tools transport returns `409` for partial consumption and `501` for operations unsupported
 by its backend.
 
+**Date and time policy:** dates use exactly four-digit years from `0000` through `9999` and must be
+real Gregorian calendar dates. A date field that includes a time keeps the written calendar date.
+`consumedAt` timestamps with an explicit `Z` or numeric offset identify an instant; without an offset,
+the runtime's local timezone determines the instant. These are the existing semantics, including the
+timezone-dependent interpretation of offset-free timestamps.
+
 The public install path is intentionally independent of any external wine API. Experimental
 alternate storage adapters are selected only by environment variable and are not needed for normal
 agent setup.
