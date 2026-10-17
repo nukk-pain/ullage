@@ -4,6 +4,8 @@ import Database from 'better-sqlite3';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { SqliteCellarStore } from './store.js';
 import { hashPayload } from './sqlite-rows.js';
 import { normalizeBatchImport } from '@ullage/domain';
@@ -345,6 +347,85 @@ test('schema upgrade preserves a legacy tasting source image in imageUrl', async
   assert.equal(store.listTastings({ source: 'external' })[0]?.imageUrl, 'https://example.test/legacy.jpg');
   store.close();
   await unlink(dbPath);
+});
+
+test('two processes can concurrently migrate an old schema without losing data', async () => {
+  const { rmSync, writeFileSync } = await import('node:fs');
+  const { randomUUID } = await import('node:crypto');
+  const helper = fileURLToPath(new URL('./schema-migration-race-child.ts', import.meta.url));
+
+  for (let iteration = 0; iteration < 5; iteration += 1) {
+    const dir = mkdtempSync(join(tmpdir(), 'ullage-schema-race-'));
+    const dbPath = join(dir, 'cellar.db');
+    const gatePath = join(dir, 'start');
+    const seed = new SqliteCellarStore(dbPath);
+    const wine = seed.addWine({ name: 'Migration seed', quantity: 3 }, { idempotencyKey: `seed-${randomUUID()}` });
+    seed.holdWine(wine.id, { reason: 'legacy hold' });
+    seed.recordTasting({ name: 'Legacy tasting', tastedAt: '2026-01-01' });
+    seed.close();
+
+    const legacy = new Database(dbPath);
+    legacy.prepare('UPDATE tastings SET notes = ?, image_url = NULL').run('Source image: https://example.test/legacy.jpg');
+    legacy.exec(`
+      ALTER TABLE wine_holds DROP COLUMN "until";
+      ALTER TABLE tastings DROP COLUMN image_url;
+      ALTER TABLE idempotency_keys DROP COLUMN hash_version;
+    `);
+    legacy.close();
+
+    try {
+      const children = [0, 1].map(() => spawn(process.execPath, ['--import', 'tsx', helper, dbPath, gatePath], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      }));
+      const outputs = children.map(() => ({ stdout: '', stderr: '' }));
+      let readyCount = 0;
+      let releaseGate: (() => void) | undefined;
+      let rejectReady: ((error: Error) => void) | undefined;
+      const bothReady = new Promise<void>((resolve, reject) => {
+        releaseGate = resolve;
+        rejectReady = reject;
+      });
+      const exits = children.map((child, index) => new Promise<number>((resolve, reject) => {
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', (chunk: string) => {
+          outputs[index]!.stdout += chunk;
+          if (outputs[index]!.stdout.includes('READY') && outputs[index]!.stdout.match(/READY/g)?.length === 1) {
+            readyCount += 1;
+            if (readyCount === children.length) releaseGate?.();
+          }
+        });
+        child.stderr.on('data', (chunk: string) => { outputs[index]!.stderr += chunk; });
+        child.once('error', reject);
+        child.once('exit', (code) => {
+          if (!outputs[index]!.stdout.includes('READY')) rejectReady?.(new Error(`${outputs[index]!.stdout}${outputs[index]!.stderr}`));
+          resolve(code ?? 1);
+        });
+      }));
+
+      await bothReady;
+      writeFileSync(gatePath, 'go');
+      const codes = await Promise.all(exits);
+      assert.deepEqual(codes, [0, 0], outputs.map((output) => `${output.stdout}${output.stderr}`).join('\n'));
+      assert.equal(outputs.every((output) => output.stdout.includes('OK 1')), true);
+
+      const migrated = new Database(dbPath);
+      try {
+        for (const [table, column] of [['wine_holds', 'until'], ['tastings', 'image_url'], ['idempotency_keys', 'hash_version']]) {
+          const columns = migrated.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+          assert.equal(columns.filter((entry) => entry.name === column).length, 1);
+        }
+        assert.equal(migrated.prepare('SELECT count(*) AS count FROM wines WHERE id = ?').get(wine.id)?.count, 1);
+        assert.equal(migrated.prepare('SELECT count(*) AS count FROM wine_holds WHERE wine_id = ? AND reason = ?').get(wine.id, 'legacy hold')?.count, 1);
+        assert.equal(migrated.prepare('SELECT image_url FROM tastings WHERE wine_name = ?').get('Legacy tasting')?.image_url, 'https://example.test/legacy.jpg');
+        assert.equal(migrated.prepare('SELECT hash_version FROM idempotency_keys WHERE idempotency_key LIKE ?').get('seed-%')?.hash_version, null);
+      } finally {
+        migrated.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 });
 
 test('list_wines inStock filter and summary in-stock counts', () => {

@@ -2,7 +2,8 @@ import type Database from 'better-sqlite3';
 import { hashPayload, type IdempotencyRow } from './sqlite-rows.js';
 
 export function initializeSqliteSchema(db: Database.Database): void {
-  db.exec(`
+  db.transaction(() => {
+    db.exec(`
     CREATE TABLE IF NOT EXISTS wines (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, producer TEXT, vintage INTEGER,
       region TEXT, country TEXT, varietal TEXT, price REAL, quantity INTEGER NOT NULL DEFAULT 1,
@@ -39,8 +40,9 @@ export function initializeSqliteSchema(db: Database.Database): void {
       tasted_at TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_tastings_time ON tastings(tasted_at);
-  `);
-  migrateSqliteSchema(db);
+    `);
+    migrateSqliteSchema(db);
+  }).immediate();
 }
 
 // Additive column migrations for databases created by older builds.
