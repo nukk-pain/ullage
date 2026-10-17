@@ -213,8 +213,23 @@ test('createUllageTools exposes the existing MCP tool names in order', () => {
     'hold_wine',
     'release_hold',
     'list_holds',
-    'recommend_wines'
+    'recommend_wines',
+    'get_exchange_rate'
   ]);
+});
+
+test('get_exchange_rate returns the configured provider result without cellar access', async () => {
+  const result = { rate: 1700, homeCurrency: 'KRW', rateDate: '2026-10-16', source: 'Frankfurter (ECB)' };
+  let received: { readonly currency: string; readonly date: string | undefined } | undefined;
+  const tools = createUllageTools(new AsyncFakeStore(), undefined, async (currency, date) => {
+    received = { currency, date };
+    return result;
+  });
+
+  const output = await tool(tools, 'get_exchange_rate').handler({ currency: 'EUR', date: '2026-10-17' });
+
+  assert.deepEqual(output, result);
+  assert.deepEqual(received, { currency: 'EUR', date: '2026-10-17' });
 });
 
 test('resolve_wine, update_consumption, record_tasting, and list_tastings delegate to the store', async () => {

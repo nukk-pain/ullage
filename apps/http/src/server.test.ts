@@ -40,7 +40,7 @@ test('health reports ok for an authorized caller', async () => {
   try {
     const response = await fetch(`${harness.url}/health`, { headers: { authorization: `Bearer ${TOKEN}` } });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: 'ok', tools: 21 });
+    assert.deepEqual(await response.json(), { status: 'ok', tools: 22 });
   } finally {
     await harness.close();
   }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
-import { ConfigError, createCellarStore, createUllageTools, parseUllageConfig } from '@ullage/mcp';
+import { ConfigError, createCellarStore, createFxService, createUllageTools, parseFxConfig, parseUllageConfig } from '@ullage/mcp';
 import { createToolHttpServer } from './server.js';
 
 const DEFAULT_PORT = 8792;
@@ -32,7 +32,8 @@ try {
   }
 
   const store = createCellarStore(parseUllageConfig(process.env));
-  const server = createToolHttpServer({ tools: createUllageTools(store), token });
+  const fxService = createFxService(parseFxConfig(process.env));
+  const server = createToolHttpServer({ tools: createUllageTools(store, fxService.convertPrice, fxService.getExchangeRate), token });
 
   let closed = false;
   function shutdown(code: number): void {

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { ConfigError, parseFxConfig, parseUllageConfig } from './config.js';
-import { createPriceConverter } from './fx.js';
+import { createFxService } from './fx.js';
 import { runMcpServer } from './mcp.js';
 import { createCellarStore } from './store-factory.js';
 import { createUllageTools } from './tools.js';
 
 try {
   const config = parseUllageConfig(process.env);
-  const convertPrice = createPriceConverter(parseFxConfig(process.env));
+  const fxService = createFxService(parseFxConfig(process.env));
   const store = createCellarStore(config);
   let closed = false;
 
@@ -34,7 +34,7 @@ try {
   runMcpServer({
     name: 'ullage',
     version: '0.1.0',
-    tools: createUllageTools(store, convertPrice)
+    tools: createUllageTools(store, fxService.convertPrice, fxService.getExchangeRate)
   });
 } catch (error) {
   if (error instanceof ConfigError) {

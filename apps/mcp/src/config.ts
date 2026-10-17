@@ -61,12 +61,12 @@ export function parseFxConfig(env: UllageEnv): FxConfig | null {
   const rateUrl = env.ULLAGE_FX_RATE_URL?.trim() ?? '';
   if (homeCurrency === '' && rateUrl === '') return null;
   if (!/^[A-Z]{3}$/.test(homeCurrency)) {
-    throw new ConfigError('ULLAGE_HOME_CURRENCY', 'ULLAGE_HOME_CURRENCY must be an ISO 4217 code such as KRW when ULLAGE_FX_RATE_URL is set.');
+    throw new ConfigError('ULLAGE_HOME_CURRENCY', 'Set ULLAGE_HOME_CURRENCY to an ISO 4217 code such as KRW; ULLAGE_FX_RATE_URL is optional.');
   }
-  if (!/^https?:\/\//.test(rateUrl) || !rateUrl.includes('{currency}')) {
+  if (rateUrl !== '' && (!/^https?:\/\//.test(rateUrl) || !rateUrl.includes('{currency}'))) {
     throw new ConfigError('ULLAGE_FX_RATE_URL', 'ULLAGE_FX_RATE_URL must be an http(s) URL containing {currency} (and optionally {date}) when ULLAGE_HOME_CURRENCY is set.');
   }
-  return { homeCurrency, rateUrl };
+  return { homeCurrency, rateUrl: rateUrl || null };
 }
 
 function backendEnvVariable(env: UllageEnv): { readonly name: 'ULLAGE_BACKEND' | 'ULLAGE_STORE'; readonly value: string } {

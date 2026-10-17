@@ -9,6 +9,7 @@ uses its own LLM (including vision for labels/receipts) and calls these tools:
 
 - `cellar_summary` — in-stock counts + recent wines (call first)
 - `list_wines` — full cellar, with optional `query` search and `inStock` filter
+- `get_exchange_rate` — quote a currency in the configured home currency for a date
 - `resolve_wine` — natural-language name → one wine, candidates to disambiguate, or none
 - `add_wine` — `{ name, producer?, vintage?, quantity?, idempotencyKey }`
 - `import_label_photo_wines` / `import_receipt_wines` — atomic confirmed batch saves, with
@@ -66,11 +67,21 @@ defaults to `~/.ullage/cellar.db`.
 Set `ULLAGE_APPEND_ONLY=true` with SQLite to reject direct edits to saved wine
 identity/purchase fields and record later changes as consume, hold, release, or note events.
 
-To keep `price` in one currency, set `ULLAGE_HOME_CURRENCY` (e.g. `KRW`) and `ULLAGE_FX_RATE_URL`
-together. The URL takes `{currency}` and `{date}` placeholders and must return JSON with a positive
-`rate` (home-currency units per one foreign unit). `add_wine` and the import tools then accept a
-`currency` for a foreign price, convert it at the purchase-date rate, and append the original
-amount to `notes`. Without these variables a foreign `currency` is rejected, never stored as-is.
+To keep `price` in one currency, set `ULLAGE_HOME_CURRENCY` (e.g. `KRW`). With no other FX setting,
+Ullage uses the built-in Frankfurter ECB provider. Frankfurter requires no API key and offers daily
+historical rates; it is a reference-rate source, not a live trading feed. A requested date can map to
+another provider observation date when no rate was published that day; `get_exchange_rate` returns
+that actual `rateDate` and the `source`. Ullage searches the previous ten calendar days plus the
+requested date and uses the latest available ECB observation in that range; it returns an error if
+the provider has no matching rate in that window.
+
+`ULLAGE_FX_RATE_URL` remains optional and overrides the built-in provider for compatibility. Its
+template may use `{currency}` and `{date}` and must return JSON with a positive numeric `rate`
+(home-currency units per one foreign unit). Include a `date` or `rateDate` field when the custom
+source reports an observation date; older `{rate}`-only responses continue to use the requested date.
+`add_wine` and the import tools accept `currency` for a foreign price, convert it at the purchase-date
+rate, and append the original amount, provider, and applied rate date to `notes`. Without
+`ULLAGE_HOME_CURRENCY`, a foreign `currency` is rejected, never stored as-is.
 
 ### HTTP backend
 

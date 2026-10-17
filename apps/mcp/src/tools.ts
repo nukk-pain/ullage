@@ -1,5 +1,6 @@
 import type { CellarStore } from './cellar-store.js';
-import { createPriceConverter, type PriceConverter } from './fx.js';
+import { createPriceConverter, type ExchangeRateLookup, type PriceConverter } from './fx.js';
+import { createFxTools } from './fx-tools.js';
 import type { McpTool } from './mcp.js';
 import {
   addWineInput,
@@ -23,7 +24,7 @@ import {
   wineProps
 } from './tool-inputs.js';
 
-export function createUllageTools(store: CellarStore, convertPrice: PriceConverter = createPriceConverter(null)): McpTool[] {
+export function createUllageTools(store: CellarStore, convertPrice: PriceConverter = createPriceConverter(null), getExchangeRate?: ExchangeRateLookup): McpTool[] {
   async function convertImport(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (!Array.isArray(args.items)) return args;
     const items = await Promise.all(args.items.map((item: unknown) =>
@@ -244,6 +245,7 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
         additionalProperties: false
       },
       handler: async (args) => store.recommendWines(recommendationInput(args))
-    }
+    },
+    ...createFxTools(getExchangeRate)
   ];
 }
