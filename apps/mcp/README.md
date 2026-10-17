@@ -72,6 +72,45 @@ together. The URL takes `{currency}` and `{date}` placeholders and must return J
 `currency` for a foreign price, convert it at the purchase-date rate, and append the original
 amount to `notes`. Without these variables a foreign `currency` is rejected, never stored as-is.
 
+### HTTP backend
+
+Set `ULLAGE_BACKEND=http` and provide `ULLAGE_HTTP_BASE_URL`. The base URL is required and has no
+default; trailing slashes are removed. `ULLAGE_STORE=http` is also accepted as the backend variable
+alias. Set `ULLAGE_HTTP_HEADERS` only when the server requires additional headers. Its value must
+be a JSON object whose values are strings, for example:
+
+```sh
+ULLAGE_BACKEND=http
+ULLAGE_HTTP_BASE_URL=https://cellar.example/api
+ULLAGE_HTTP_HEADERS='{"Authorization":"Bearer example"}'
+```
+
+The client always sends `Accept: application/json`; JSON requests also include `Content-Type` and
+`Content-Length`. Configured headers are added to those requests. The server must implement this
+contract:
+
+| Request | Request body | Successful response |
+| --- | --- | --- |
+| `GET /wines` | None | `{ "wines": [Wine, ...] }` |
+| `POST /wines` | `{ name, quantity, producer?, vintage?, region?, country?, varietal?, grape_variety?, price?, store?, purchase_date?, notes? }` | A `Wine` object |
+| `GET /wines/{id}` | None | A `Wine` object; `404` means not found |
+| `POST /wines/{id}/consume` | `{ rating?, note?, consumed_at? }` | A `Wine` object or `{ "sourceWine": Wine }`; `404` means not found |
+| `GET /wines?status=Consumed&limit=100&offset={n}` | None | `{ "wines": [Consumption, ...], "total": number }` |
+
+`Wine` responses use camelCase fields and must include non-empty `id`, `name`, `createdAt`, and
+`updatedAt`. Optional fields include `producer`, `vintage`, `region`, `country`, `varietal` (or
+`grapeVariety`), `price`, `quantity`, `rating`, `notes`, `store`, and `purchaseDate`. Consumption
+rows must include non-empty `id`, `wineId`, and `consumedAt`; `quantity` defaults to one if omitted.
+The client filters `GET /wines` results locally. A consume quantity greater than one becomes
+sequential `POST /wines/{id}/consume` requests. MCP `idempotencyKey` values remain client-side
+deduplication keys and are not sent to the HTTP server.
+
+The client treats `404` as not found only for the wine lookup and consume requests. Other non-2xx
+responses fail the operation, and the error omits the server response body. Successful responses
+must match the JSON shapes above. Operations that require import, update, tasting, note, hold,
+recommendation, activity, or export semantics are unsupported by this adapter and fail before
+making an HTTP request.
+
 Normal installs should leave backend variables unset. Alternate storage adapters are private or
 advanced integrations selected only by environment variable, and are not part of the zero-setup
 agent path.

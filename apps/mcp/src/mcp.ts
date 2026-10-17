@@ -1,6 +1,6 @@
 // Minimal MCP stdio server (JSON-RPC 2.0, newline-delimited).
 // Dependency-free to avoid coupling to a specific SDK version; follows the MCP spec methods
-// that OpenClaw/Hermes and other clients use: initialize, tools/list, tools/call, ping.
+// that MCP clients use: initialize, tools/list, tools/call, ping.
 // IMPORTANT: stdout carries only protocol messages — all logging goes to stderr.
 
 export type McpTool = {

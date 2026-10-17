@@ -5,12 +5,12 @@ import type { Wine } from '@ullage/domain';
 export type RecordedRequest = {
   readonly method: string;
   readonly path: string;
-  readonly openClawClient: string | undefined;
+  readonly headers: IncomingMessage['headers'];
   readonly secFetchMode: string | undefined;
   readonly body: string;
 };
 
-type FakeOpenClawServer = {
+type FakeHTTPServer = {
   readonly baseUrl: string;
   readonly requests: readonly RecordedRequest[];
   readonly close: () => Promise<void>;
@@ -36,17 +36,31 @@ export const mappedWine: Wine = {
   createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z'
 };
 
-export async function startFakeOpenClawServer(handler: FakeHandler): Promise<FakeOpenClawServer> {
+export async function startFakeHTTPServer(handler: FakeHandler): Promise<FakeHTTPServer> {
   const requests: RecordedRequest[] = [];
+  const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const recordedRequest: RecordedRequest = {
+      method: request.method ?? '',
+      path: `${url.pathname}${url.search}`,
+      headers: request.headers,
+      secFetchMode: singleHeader(request.headers['sec-fetch-mode']),
+      body: await readBody(request)
+    };
+    requests.push(recordedRequest);
+    const fakeResponse = handler(recordedRequest);
+    response.writeHead(fakeResponse.status, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(fakeResponse.body));
+  };
   const server = createServer((request, response) => {
-    void handleRequest(request, response, requests, handler);
+    void handleRequest(request, response);
   });
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve);
   });
   const address = server.address();
   if (address === null || typeof address === 'string') {
-    throw new Error('Fake OpenClaw server did not bind a TCP port');
+    throw new Error('Fake HTTP server did not bind a TCP port');
   }
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
@@ -55,9 +69,9 @@ export async function startFakeOpenClawServer(handler: FakeHandler): Promise<Fak
   };
 }
 
-export function requestSummary(requests: readonly RecordedRequest[]): Array<Omit<RecordedRequest, 'body' | 'secFetchMode'>> {
+export function requestSummary(requests: readonly RecordedRequest[]): Array<Pick<RecordedRequest, 'method' | 'path'>> {
   assert.deepEqual(requests.map((request) => request.secFetchMode), requests.map(() => undefined));
-  return requests.map((request) => ({ method: request.method, path: request.path, openClawClient: request.openClawClient }));
+  return requests.map((request) => ({ method: request.method, path: request.path }));
 }
 
 export function onlyRequest(requests: readonly RecordedRequest[]): RecordedRequest {
@@ -65,26 +79,6 @@ export function onlyRequest(requests: readonly RecordedRequest[]): RecordedReque
   const [request] = requests;
   if (request === undefined) throw new Error('Expected one recorded request');
   return request;
-}
-
-async function handleRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  requests: RecordedRequest[],
-  handler: FakeHandler
-): Promise<void> {
-  const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-  const recordedRequest: RecordedRequest = {
-    method: request.method ?? '',
-    path: `${url.pathname}${url.search}`,
-    openClawClient: singleHeader(request.headers['x-openclaw-client']),
-    secFetchMode: singleHeader(request.headers['sec-fetch-mode']),
-    body: await readBody(request)
-  };
-  requests.push(recordedRequest);
-  const fakeResponse = handler(recordedRequest);
-  response.writeHead(fakeResponse.status, { 'content-type': 'application/json' });
-  response.end(JSON.stringify(fakeResponse.body));
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {

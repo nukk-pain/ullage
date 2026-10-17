@@ -9,14 +9,19 @@ export type HttpResponse = {
   readonly body: unknown;
 };
 
-const OPENCLAW_CLIENT = 'cli';
+export type HttpHeaders = Readonly<Record<string, string>>;
 
-export function sendJsonRequest(url: URL, method: HttpMethod, body?: JsonObject): Promise<HttpResponse> {
+export type JsonRequestOptions = {
+  readonly body: JsonObject | undefined;
+  readonly headers: HttpHeaders;
+};
+
+export function sendJsonRequest(url: URL, method: HttpMethod, options: JsonRequestOptions): Promise<HttpResponse> {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`Unsupported OpenClaw URL protocol ${url.protocol}`);
+    throw new Error(`Unsupported HTTP URL protocol ${url.protocol}`);
   }
-  const bodyText = body === undefined ? undefined : JSON.stringify(body);
-  const headers = requestHeaders(bodyText);
+  const bodyText = options.body === undefined ? undefined : JSON.stringify(options.body);
+  const headers = requestHeaders(bodyText, options.headers);
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
 
   return new Promise<HttpResponse>((resolve, reject) => {
@@ -32,11 +37,11 @@ export function sendJsonRequest(url: URL, method: HttpMethod, body?: JsonObject)
   });
 }
 
-function requestHeaders(bodyText: string | undefined): Record<string, string> {
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-    'X-OpenClaw-Client': OPENCLAW_CLIENT
-  };
+function requestHeaders(bodyText: string | undefined, additionalHeaders: HttpHeaders): Record<string, string> {
+  const headers = Object.fromEntries(
+    Object.entries(additionalHeaders).filter(([name]) => !['accept', 'content-type', 'content-length'].includes(name.toLowerCase()))
+  );
+  headers.Accept = 'application/json';
   if (bodyText !== undefined) {
     headers['Content-Type'] = 'application/json';
     headers['Content-Length'] = String(Buffer.byteLength(bodyText));

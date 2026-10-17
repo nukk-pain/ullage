@@ -25,33 +25,39 @@ import {
   type WriteOptions
 } from '@ullage/domain';
 import type { CellarExport, CellarStore, CellarSummary } from './cellar-store.js';
-import { sendJsonRequest, type JsonObject } from './openclaw-http-client.js';
-import { consumptionPageFromJson, describeWine, hashPayload, putIfPresent, wineFromConsumeResponse, wineFromJson, wineListFromJson } from './openclaw-http-mappers.js';
+import { sendJsonRequest, type HttpHeaders, type JsonObject } from './http-cellar-client.js';
+import { consumptionPageFromJson, describeWine, hashPayload, putIfPresent, wineFromConsumeResponse, wineFromJson, wineListFromJson } from './http-cellar-mappers.js';
 
 const CONSUMPTION_PAGE_SIZE = 100;
 
+type StoreRequestOptions = {
+  readonly body?: JsonObject;
+  readonly okStatuses?: readonly number[];
+};
 
-export class UnsupportedOpenClawOperationError extends Error {
-  readonly name = 'UnsupportedOpenClawOperationError';
+export class UnsupportedHttpOperationError extends Error {
+  readonly name = 'UnsupportedHttpOperationError';
 
   constructor(operation: string) {
-    super(`${operation} is unsupported-by-openclaw-backend yet; the configured OpenClaw backend does not expose faithful ullage semantics for this method.`);
+    super(`${operation} is unsupported-by-http-backend yet; the configured HTTP backend does not expose faithful ullage semantics for this method.`);
   }
 }
 
-export class OpenClawHttpCellarStore implements CellarStore {
+export class HttpCellarStore implements CellarStore {
   private readonly baseUrl: string;
+  private readonly headers: HttpHeaders;
   private readonly idempotency = new Map<string, { readonly operation: string; readonly payloadHash: string; readonly result: Promise<unknown> }>();
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, headers: HttpHeaders = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.headers = headers;
   }
 
   async addWine(input: AddWineInput, options: WriteOptions = {}): Promise<Wine> {
     return this.idempotent('addWine', options.idempotencyKey, input, async () => {
       const fields = normalizeAddWine(input);
       if (fields.quantity <= 0) {
-        throw new Error('OpenClaw wine API requires quantity greater than 0 when adding wine');
+        throw new Error('HTTP wine API requires quantity greater than 0 when adding wine');
       }
       const payload: JsonObject = {
         name: fields.name,
@@ -68,7 +74,7 @@ export class OpenClawHttpCellarStore implements CellarStore {
       putIfPresent(payload, 'purchase_date', fields.purchaseDate);
       putIfPresent(payload, 'notes', fields.notes);
 
-      const response = await this.request('POST', '/wines', payload);
+      const response = await this.request('POST', '/wines', { body: payload });
       return wineFromJson(response.body);
     });
   }
@@ -81,7 +87,7 @@ export class OpenClawHttpCellarStore implements CellarStore {
   }
 
   async getWine(id: string): Promise<Wine | undefined> {
-    const response = await this.request('GET', `/wines/${encodeURIComponent(id)}`, undefined, [404]);
+    const response = await this.request('GET', `/wines/${encodeURIComponent(id)}`, { okStatuses: [404] });
     return response.status === 404 ? undefined : wineFromJson(response.body);
   }
 
@@ -90,23 +96,23 @@ export class OpenClawHttpCellarStore implements CellarStore {
   }
 
   async importWines(_input: BatchImportInput): Promise<BatchImportResult> {
-    throw new UnsupportedOpenClawOperationError('importWines');
+    throw new UnsupportedHttpOperationError('importWines');
   }
 
   async updateConsumption(_eventId: string, _input: UpdateConsumptionInput, _options: WriteOptions = {}): Promise<ConsumptionEvent> {
-    throw new UnsupportedOpenClawOperationError('updateConsumption');
+    throw new UnsupportedHttpOperationError('updateConsumption');
   }
 
   async recordTasting(_input: RecordTastingInput, _options: WriteOptions = {}): Promise<Tasting> {
-    throw new UnsupportedOpenClawOperationError('recordTasting');
+    throw new UnsupportedHttpOperationError('recordTasting');
   }
 
   async listTastings(_query?: TastingQuery): Promise<Tasting[]> {
-    throw new UnsupportedOpenClawOperationError('listTastings');
+    throw new UnsupportedHttpOperationError('listTastings');
   }
 
   async updateWine(_id: string, _input: Partial<AddWineInput>, _options: WriteOptions = {}): Promise<Wine | undefined> {
-    throw new UnsupportedOpenClawOperationError('updateWine');
+    throw new UnsupportedHttpOperationError('updateWine');
   }
 
   async consumeWine(id: string, input: ConsumeInput, options: WriteOptions = {}): Promise<Wine | undefined> {
@@ -127,7 +133,7 @@ export class OpenClawHttpCellarStore implements CellarStore {
 
       let latest: Wine = existing;
       for (let i = 0; i < consumed; i += 1) {
-        const response = await this.request('POST', `/wines/${encodeURIComponent(id)}/consume`, payload, [404]);
+        const response = await this.request('POST', `/wines/${encodeURIComponent(id)}/consume`, { body: payload, okStatuses: [404] });
         if (response.status === 404) return undefined;
         latest = wineFromConsumeResponse(response.body);
       }
@@ -152,31 +158,31 @@ export class OpenClawHttpCellarStore implements CellarStore {
   }
 
   async addNote(_wineId: string, _note: unknown, _rating?: unknown, _options: WriteOptions = {}): Promise<never> {
-    throw new UnsupportedOpenClawOperationError('addNote');
+    throw new UnsupportedHttpOperationError('addNote');
   }
 
   async listNotes(_wineId?: string): Promise<never> {
-    throw new UnsupportedOpenClawOperationError('listNotes');
+    throw new UnsupportedHttpOperationError('listNotes');
   }
 
   async holdWine(_id: string, _input: HoldInput): Promise<WineHold> {
-    throw new UnsupportedOpenClawOperationError('holdWine');
+    throw new UnsupportedHttpOperationError('holdWine');
   }
 
   async releaseHold(_id: string, _input: ReleaseHoldInput): Promise<WineHold> {
-    throw new UnsupportedOpenClawOperationError('releaseHold');
+    throw new UnsupportedHttpOperationError('releaseHold');
   }
 
   async listHolds(): Promise<WineHold[]> {
-    throw new UnsupportedOpenClawOperationError('listHolds');
+    throw new UnsupportedHttpOperationError('listHolds');
   }
 
   async recommendWines(_input: RecommendationInput): Promise<RecommendationResult> {
-    throw new UnsupportedOpenClawOperationError('recommendWines');
+    throw new UnsupportedHttpOperationError('recommendWines');
   }
 
   async listActivity(_limit?: number): Promise<never> {
-    throw new UnsupportedOpenClawOperationError('listActivity');
+    throw new UnsupportedHttpOperationError('listActivity');
   }
 
   async summary(): Promise<CellarSummary> {
@@ -191,16 +197,16 @@ export class OpenClawHttpCellarStore implements CellarStore {
   }
 
   async exportJson(): Promise<CellarExport> {
-    throw new UnsupportedOpenClawOperationError('exportJson');
+    throw new UnsupportedHttpOperationError('exportJson');
   }
 
   close(): void {}
 
-  private async request(method: 'GET' | 'POST', path: string, body?: JsonObject, okStatuses: readonly number[] = []): Promise<{ readonly status: number; readonly body: unknown }> {
+  private async request(method: 'GET' | 'POST', path: string, options: StoreRequestOptions = {}): Promise<{ readonly status: number; readonly body: unknown }> {
     const url = new URL(`${this.baseUrl}${path}`);
-    const response = await sendJsonRequest(url, method, body);
-    if ((response.status < 200 || response.status >= 300) && !okStatuses.includes(response.status)) {
-      throw new Error(`OpenClaw wine API ${method} ${path} failed with HTTP ${response.status}: upstream error response omitted`);
+    const response = await sendJsonRequest(url, method, { body: options.body, headers: this.headers });
+    if ((response.status < 200 || response.status >= 300) && !options.okStatuses?.includes(response.status)) {
+      throw new Error(`HTTP wine API ${method} ${path} failed with HTTP ${response.status}: upstream error response omitted`);
     }
     return response;
   }

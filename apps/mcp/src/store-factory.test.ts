@@ -19,8 +19,8 @@ test('createCellarStore creates the default sqlite adapter without network confi
   await unlink(dbPath);
 });
 
-test('createCellarStore returns a non-sqlite cellar store for the openclaw backend', async () => {
-  const store = createCellarStore({ backend: 'openclaw', baseUrl: 'http://127.0.0.1:1' });
+test('createCellarStore returns a non-sqlite cellar store for the http backend', async () => {
+  const store = createCellarStore({ backend: 'http', baseUrl: 'http://127.0.0.1:8080', headers: {} });
 
   assert.equal(typeof store.addWine, 'function');
   assert.equal(store instanceof SqliteCellarStore, false);

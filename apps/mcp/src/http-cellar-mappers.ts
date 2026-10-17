@@ -1,26 +1,26 @@
 import { createHash } from 'node:crypto';
 import type { ConsumptionEvent, Wine } from '@ullage/domain';
-import type { JsonObject } from './openclaw-http-client.js';
+import type { JsonObject } from './http-cellar-client.js';
 
-export type OpenClawConsumptionPage = {
+export type HttpConsumptionPage = {
   readonly events: ConsumptionEvent[];
   readonly total: number | null;
 };
 
 export function wineListFromJson(value: unknown): Wine[] {
-  const object = requireRecord(value, 'OpenClaw wine list response');
+  const object = requireRecord(value, 'HTTP wine list response');
   const wines = object.wines;
-  if (!Array.isArray(wines)) throw new Error('OpenClaw wine list response is missing wines[]');
+  if (!Array.isArray(wines)) throw new Error('HTTP wine list response is missing wines[]');
   return wines.map(wineFromJson);
 }
 
 export function wineFromConsumeResponse(value: unknown): Wine {
-  const object = requireRecord(value, 'OpenClaw consume response');
+  const object = requireRecord(value, 'HTTP consume response');
   return wineFromJson(object.sourceWine ?? value);
 }
 
 export function wineFromJson(value: unknown): Wine {
-  const object = requireRecord(value, 'OpenClaw wine response');
+  const object = requireRecord(value, 'HTTP wine response');
   return {
     id: requireString(object.id, 'wine.id'),
     name: requireString(object.name, 'wine.name'),
@@ -42,10 +42,10 @@ export function wineFromJson(value: unknown): Wine {
   };
 }
 
-export function consumptionPageFromJson(value: unknown): OpenClawConsumptionPage {
-  const object = requireRecord(value, 'OpenClaw consumed wine list response');
+export function consumptionPageFromJson(value: unknown): HttpConsumptionPage {
+  const object = requireRecord(value, 'HTTP consumed wine list response');
   const wines = object.wines;
-  if (!Array.isArray(wines)) throw new Error('OpenClaw consumed wine list response is missing wines[]');
+  if (!Array.isArray(wines)) throw new Error('HTTP consumed wine list response is missing wines[]');
   return { events: wines.map(consumptionFromJson), total: nullableInteger(object.total) };
 }
 
@@ -62,7 +62,7 @@ export function describeWine(wine: Pick<Wine, 'name' | 'vintage'>): string {
 }
 
 function consumptionFromJson(value: unknown): ConsumptionEvent {
-  const object = requireRecord(value, 'OpenClaw consumed wine row');
+  const object = requireRecord(value, 'HTTP consumed wine row');
   return {
     id: requireString(object.id, 'consumption.id'),
     wineId: requireString(object.wineId, 'consumption.wineId'),
@@ -83,7 +83,7 @@ function isJsonObject(value: unknown): value is JsonObject {
 }
 
 function requireString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`OpenClaw response is missing ${field}`);
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`HTTP response is missing ${field}`);
   return value;
 }
 

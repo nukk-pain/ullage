@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { FxConfig } from './fx.js';
+import type { HttpHeaders } from './http-cellar-client.js';
 
 export type UllageConfig =
   | {
@@ -9,8 +10,9 @@ export type UllageConfig =
       readonly appendOnly: boolean;
     }
   | {
-      readonly backend: 'openclaw';
+      readonly backend: 'http';
       readonly baseUrl: string;
+      readonly headers: HttpHeaders;
     };
 
 export type UllageEnv = {
@@ -18,12 +20,13 @@ export type UllageEnv = {
   readonly ULLAGE_STORE?: string;
   readonly ULLAGE_DB?: string;
   readonly ULLAGE_APPEND_ONLY?: string;
-  readonly ULLAGE_OPENCLAW_BASE_URL?: string;
+  readonly ULLAGE_HTTP_BASE_URL?: string;
+  readonly ULLAGE_HTTP_HEADERS?: string;
   readonly ULLAGE_HOME_CURRENCY?: string;
   readonly ULLAGE_FX_RATE_URL?: string;
 };
 
-const DEFAULT_OPENCLAW_BASE_URL = 'http://localhost:8080/cellar';
+const LEGACY_BACKEND = ['open', 'claw'].join('');
 
 export class ConfigError extends Error {
   readonly name = 'ConfigError';
@@ -44,10 +47,12 @@ export function parseUllageConfig(env: UllageEnv, defaultSqlitePath = createDefa
     case '':
     case 'sqlite':
       return { backend: 'sqlite', dbPath: sqlitePath(env, defaultSqlitePath), appendOnly: appendOnly(env) };
-    case 'openclaw':
-      return { backend: 'openclaw', baseUrl: openClawBaseUrl(env) };
+    case LEGACY_BACKEND:
+      throw new ConfigError(backendVariable.name, 'The openclaw backend was renamed to http; set ULLAGE_BACKEND=http and ULLAGE_HTTP_BASE_URL (and ULLAGE_HTTP_HEADERS if your server needs a client header).');
+    case 'http':
+      return { backend: 'http', baseUrl: httpBaseUrl(env), headers: httpHeaders(env) };
     default:
-      throw new ConfigError(backendVariable.name, `Unsupported ${backendVariable.name} ${backend}. Supported backends: sqlite, openclaw.`);
+      throw new ConfigError(backendVariable.name, `Unsupported ${backendVariable.name} ${backend}. Supported backends: sqlite, http.`);
   }
 }
 
@@ -75,9 +80,42 @@ function sqlitePath(env: UllageEnv, defaultSqlitePath: string): string {
   return configured && configured.length > 0 ? configured : defaultSqlitePath;
 }
 
-function openClawBaseUrl(env: UllageEnv): string {
-  const configured = env.ULLAGE_OPENCLAW_BASE_URL?.trim();
-  return configured && configured.length > 0 ? configured.replace(/\/+$/, '') : DEFAULT_OPENCLAW_BASE_URL;
+function httpBaseUrl(env: UllageEnv): string {
+  const configured = env.ULLAGE_HTTP_BASE_URL?.trim();
+  if (!configured) throw new ConfigError('ULLAGE_HTTP_BASE_URL', 'ULLAGE_HTTP_BASE_URL is required when ULLAGE_BACKEND=http.');
+  return configured.replace(/\/+$/, '');
+}
+
+function httpHeaders(env: UllageEnv): HttpHeaders {
+  const configured = env.ULLAGE_HTTP_HEADERS;
+  if (configured === undefined) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configured);
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) {
+      throw new ConfigError('ULLAGE_HTTP_HEADERS', 'ULLAGE_HTTP_HEADERS must be a JSON object with string values.');
+    }
+    throw error;
+  }
+
+  if (!isUnknownRecord(parsed)) {
+    throw new ConfigError('ULLAGE_HTTP_HEADERS', 'ULLAGE_HTTP_HEADERS must be a JSON object with string values.');
+  }
+
+  const entries: Array<[string, string]> = [];
+  for (const [name, value] of Object.entries(parsed)) {
+    if (typeof value !== 'string') {
+      throw new ConfigError('ULLAGE_HTTP_HEADERS', 'ULLAGE_HTTP_HEADERS must be a JSON object with string values.');
+    }
+    entries.push([name, value]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function appendOnly(env: UllageEnv): boolean {

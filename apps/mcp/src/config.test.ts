@@ -23,28 +23,73 @@ test('parseUllageConfig enables append-only SQLite mode from ULLAGE_APPEND_ONLY'
   });
 });
 
-test('parseUllageConfig returns the openclaw backend with the default local wine API URL', () => {
-  assert.deepEqual(parseUllageConfig({ ULLAGE_BACKEND: 'openclaw' }, '/tmp/default-cellar.db'), {
-    backend: 'openclaw',
-    baseUrl: 'http://localhost:8080/cellar'
-  });
+test('parseUllageConfig requires ULLAGE_HTTP_BASE_URL for the http backend', () => {
+  assert.throws(
+    () => parseUllageConfig({ ULLAGE_BACKEND: 'http' }, '/tmp/default-cellar.db'),
+    (error: unknown) => error instanceof ConfigError && error.variable === 'ULLAGE_HTTP_BASE_URL' && /ULLAGE_HTTP_BASE_URL/.test(error.message)
+  );
+  assert.throws(
+    () => parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: '   ' }, '/tmp/default-cellar.db'),
+    (error: unknown) => error instanceof ConfigError && error.variable === 'ULLAGE_HTTP_BASE_URL'
+  );
 });
 
-test('parseUllageConfig lets ULLAGE_OPENCLAW_BASE_URL override the default local wine API URL', () => {
+test('parseUllageConfig parses http backend URL, headers, and trailing slash normalization', () => {
   assert.deepEqual(
-    parseUllageConfig({ ULLAGE_BACKEND: 'openclaw', ULLAGE_OPENCLAW_BASE_URL: 'http://127.0.0.1:8080/custom' }, '/tmp/default-cellar.db'),
+    parseUllageConfig({
+      ULLAGE_BACKEND: 'http',
+      ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080/api///',
+      ULLAGE_HTTP_HEADERS: '{"X-Test-Client":"custom-cli","Authorization":"Bearer example"}'
+    }, '/tmp/default-cellar.db'),
     {
-      backend: 'openclaw',
-      baseUrl: 'http://127.0.0.1:8080/custom'
+      backend: 'http',
+      baseUrl: 'http://127.0.0.1:8080/api',
+      headers: { 'X-Test-Client': 'custom-cli', Authorization: 'Bearer example' }
     }
   );
 });
 
-test('parseUllageConfig accepts ULLAGE_STORE as an alias for the openclaw backend', () => {
-  assert.deepEqual(parseUllageConfig({ ULLAGE_STORE: 'openclaw' }, '/tmp/default-cellar.db'), {
-    backend: 'openclaw',
-    baseUrl: 'http://localhost:8080/cellar'
-  });
+test('parseUllageConfig defaults optional http headers to an empty object', () => {
+  assert.deepEqual(
+    parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080' }, '/tmp/default-cellar.db'),
+    { backend: 'http', baseUrl: 'http://127.0.0.1:8080', headers: {} }
+  );
+});
+
+test('parseUllageConfig accepts ULLAGE_STORE as an alias for the http backend', () => {
+  assert.deepEqual(
+    parseUllageConfig({ ULLAGE_STORE: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080' }, '/tmp/default-cellar.db'),
+    { backend: 'http', baseUrl: 'http://127.0.0.1:8080', headers: {} }
+  );
+});
+
+test('parseUllageConfig rejects invalid ULLAGE_HTTP_HEADERS JSON', () => {
+  for (const value of ['{', '']) {
+    assert.throws(
+      () => parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080', ULLAGE_HTTP_HEADERS: value }, '/tmp/default-cellar.db'),
+      (error: unknown) => error instanceof ConfigError && error.variable === 'ULLAGE_HTTP_HEADERS'
+    );
+  }
+});
+
+test('parseUllageConfig rejects non-object or non-string ULLAGE_HTTP_HEADERS values', () => {
+  for (const value of ['[]', 'null', '{"X-Count":1}']) {
+    assert.throws(
+      () => parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: 'http://127.0.0.1:8080', ULLAGE_HTTP_HEADERS: value }, '/tmp/default-cellar.db'),
+      (error: unknown) => error instanceof ConfigError && error.variable === 'ULLAGE_HTTP_HEADERS'
+    );
+  }
+});
+
+test('parseUllageConfig guides users from the renamed openclaw backend', () => {
+  assert.throws(
+    () => parseUllageConfig({ ULLAGE_BACKEND: 'openclaw' }, '/tmp/default-cellar.db'),
+    (error: unknown) => error instanceof ConfigError
+      && error.variable === 'ULLAGE_BACKEND'
+      && /renamed to http/.test(error.message)
+      && /ULLAGE_HTTP_BASE_URL/.test(error.message)
+      && /ULLAGE_HTTP_HEADERS/.test(error.message)
+  );
 });
 
 test('parseUllageConfig rejects unknown backends with a typed ULLAGE_BACKEND error', () => {
