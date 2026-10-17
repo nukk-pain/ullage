@@ -44,8 +44,27 @@ test('sendJsonRequest enforces a timeout and caps response bytes', async () => {
 });
 
 test('HttpCellarStore accepts a 1.15 MB wine list at the default response limit', async () => {
-  const wines = Array.from({ length: 180 }, (_, index) => ({ ...serviceWine, id: `wine-${index}`, notes: 'x'.repeat(6000) }));
-  const server = await startFakeHTTPServer(() => ({ status: 200, body: { wines, total: wines.length } }));
+  const wines = Array.from({ length: 180 }, (_, index) => ({
+    id: `synthetic-${index}`,
+    name: 'Synthetic Chablis',
+    quantity: 3,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    producer: 'Synthetic producer',
+    vintage: 2020,
+    region: 'Burgundy',
+    country: 'France',
+    varietal: 'Chardonnay',
+    price: 100,
+    store: 'Synthetic shop',
+    purchaseDate: '2026-01-01',
+    drinkByDate: '2030-01-01',
+    location: 'Synthetic rack',
+    notes: 'x'.repeat(6000)
+  }));
+  const responseBody = { wines };
+  assert.equal(Buffer.byteLength(JSON.stringify(responseBody)), 1_148_661);
+  const server = await startFakeHTTPServer(() => ({ status: 200, body: responseBody }));
   try {
     const config = parseUllageConfig({ ULLAGE_BACKEND: 'http', ULLAGE_HTTP_BASE_URL: server.baseUrl });
     const store = createCellarStore(config);
