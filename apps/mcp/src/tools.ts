@@ -33,6 +33,18 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
     return { ...args, items };
   }
 
+  async function replayBeforeFx(operation: string, key: unknown, payload: unknown): Promise<unknown | undefined> {
+    if (typeof key !== 'string' || key.trim() === '' || store.replayIdempotent === undefined) return undefined;
+    return store.replayIdempotent(operation, key, payload);
+  }
+
+  async function importWithFx(args: Record<string, unknown>, source: 'label_photo' | 'receipt'): Promise<unknown> {
+    const replay = await replayBeforeFx('importWines', args.idempotencyKey, args);
+    if (replay !== undefined) return replay;
+    const converted = await convertImport(args);
+    return store.importWines({ ...batchImportInput(converted, source), idempotencyPayload: args });
+  }
+
   return [
     {
       name: 'cellar_summary',
@@ -74,7 +86,12 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
       name: 'add_wine',
       description: 'Add a bottle. Put the year in `vintage` (integer), not in `name`. quantity defaults to 1. Capture region/varietal/drink-by when known; from a receipt also capture price, purchaseDate (YYYY-MM-DD), and store.',
       inputSchema: { type: 'object', properties: { ...wineProps, ...currencyProp, ...idempotencyProp }, required: ['name', 'idempotencyKey'], additionalProperties: false },
-      handler: async (args) => store.addWine(addWineInput(await convertPrice(args)), requiredWriteOptions(args))
+      handler: async (args) => {
+        const options = requiredWriteOptions(args);
+        const replay = await replayBeforeFx('addWine', options.idempotencyKey, args);
+        if (replay !== undefined) return replay;
+        return store.addWine(addWineInput(await convertPrice(args)), { ...options, idempotencyPayload: args });
+      }
     },
     {
       name: 'update_wine',
@@ -200,13 +217,13 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
       name: 'import_label_photo_wines',
       description: 'Save multiple agent-confirmed wines extracted from label photos as one atomic batch. The agent supplies structured fields after image/OCR work.',
       inputSchema: importSchema('label_photo'),
-      handler: async (args) => store.importWines(batchImportInput(await convertImport(args), 'label_photo'))
+      handler: async (args) => importWithFx(args, 'label_photo')
     },
     {
       name: 'import_receipt_wines',
       description: 'Save multiple agent-confirmed wines extracted from a receipt photo as one atomic batch, including price, purchaseDate, and store when known.',
       inputSchema: importSchema('receipt'),
-      handler: async (args) => store.importWines(batchImportInput(await convertImport(args), 'receipt'))
+      handler: async (args) => importWithFx(args, 'receipt')
     },
     {
       name: 'hold_wine',

@@ -28,7 +28,7 @@ export function initializeSqliteSchema(db: Database.Database): void {
     );
     CREATE TABLE IF NOT EXISTS idempotency_keys (
       idempotency_key TEXT PRIMARY KEY, operation TEXT NOT NULL, payload_hash TEXT NOT NULL,
-      result_json TEXT NOT NULL, created_at TEXT NOT NULL, hash_version INTEGER
+      result_json TEXT NOT NULL, created_at TEXT NOT NULL, hash_version INTEGER, source_payload_hash TEXT
     );
     CREATE TABLE IF NOT EXISTS activity_log (
       id TEXT PRIMARY KEY, action TEXT NOT NULL, wine_id TEXT, summary TEXT NOT NULL, created_at TEXT NOT NULL
@@ -54,6 +54,7 @@ function migrateSqliteSchema(db: Database.Database): void {
   if (!tastingColumns.includes('image_url')) db.exec('ALTER TABLE tastings ADD COLUMN image_url TEXT');
   const idempotencyColumns = (db.prepare('PRAGMA table_info(idempotency_keys)').all() as { name: string }[]).map((c) => c.name);
   if (!idempotencyColumns.includes('hash_version')) db.exec('ALTER TABLE idempotency_keys ADD COLUMN hash_version INTEGER');
+  if (!idempotencyColumns.includes('source_payload_hash')) db.exec('ALTER TABLE idempotency_keys ADD COLUMN source_payload_hash TEXT');
   const duplicateHolds = db.prepare(`UPDATE wine_holds AS older
     SET released_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE older.released_at IS NULL AND EXISTS (
@@ -75,13 +76,18 @@ function migrateSqliteSchema(db: Database.Database): void {
   }
 }
 
-export function runIdempotent<T>(db: Database.Database, operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => []): T {
+export function runIdempotent<T>(db: Database.Database, operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => [], sourcePayload?: unknown): T {
   if (key === undefined || key.trim().length === 0) return db.transaction(work)();
   const payloadHash = hashPayload(operation, payload);
-  const existing = db.prepare('SELECT * FROM idempotency_keys WHERE idempotency_key = ?').get(key) as IdempotencyRow | undefined;
+  const sourcePayloadHash = sourcePayload === undefined ? null : hashPayload(operation, sourcePayload);
+  const existing = db.prepare('SELECT * FROM idempotency_keys WHERE idempotency_key = ?').get(key) as (IdempotencyRow & { source_payload_hash?: string | null }) | undefined;
   if (existing) {
     if (existing.operation !== operation) {
       throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+    }
+    if (sourcePayloadHash !== null && existing.source_payload_hash != null) {
+      if (existing.source_payload_hash !== sourcePayloadHash) throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+      return decodeResult(existing.result_json) as T;
     }
     if (existing.payload_hash !== payloadHash) {
       if (existing.hash_version !== null && existing.hash_version !== undefined) {
@@ -99,16 +105,29 @@ export function runIdempotent<T>(db: Database.Database, operation: string, key: 
   }
   return db.transaction(() => {
     const result = work();
-    db.prepare('INSERT INTO idempotency_keys (idempotency_key, operation, payload_hash, result_json, created_at, hash_version) VALUES (?, ?, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO idempotency_keys (idempotency_key, operation, payload_hash, result_json, created_at, hash_version, source_payload_hash) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       key,
       operation,
       payloadHash,
       encodeResult(result),
       new Date().toISOString(),
-      1
+      1,
+      sourcePayloadHash
     );
     return result;
   })();
+}
+
+export function replayIdempotent(db: Database.Database, operation: string, key: string, payload: unknown): unknown | undefined {
+  const existing = db.prepare('SELECT operation, result_json, source_payload_hash FROM idempotency_keys WHERE idempotency_key = ?')
+    .get(key) as { operation: string; result_json: string; source_payload_hash: string | null } | undefined;
+  if (!existing) return undefined;
+  if (existing.operation !== operation) throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+  if (existing.source_payload_hash === null) return undefined;
+  if (existing.source_payload_hash !== hashPayload(operation, payload)) {
+    throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+  }
+  return decodeResult(existing.result_json);
 }
 
 function encodeResult(result: unknown): string {

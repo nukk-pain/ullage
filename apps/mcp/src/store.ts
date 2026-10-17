@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { CellarExport, CellarStore, CellarSummary } from './cellar-store.js';
-import { initializeSqliteSchema, runIdempotent } from './sqlite-schema.js';
+import { initializeSqliteSchema, replayIdempotent as replayStoredIdempotent, runIdempotent } from './sqlite-schema.js';
 import {
   consumptionToTasting,
   describe,
@@ -66,11 +66,12 @@ export class SqliteCellarStore implements CellarStore {
   }
 
   addWine(input: AddWineInput, options: WriteOptions = {}): Wine {
-    return this.idempotent('addWine', options.idempotencyKey, input, () => this.insertWine(normalizeAddWine(input), 'add'));
+    return this.idempotent('addWine', options.idempotencyKey, input, () => this.insertWine(normalizeAddWine(input), 'add'), () => [], options.idempotencyPayload);
   }
 
   importWines(input: BatchImportInput): BatchImportResult {
-    return this.idempotent('importWines', normalizeIdempotencyKey(input.idempotencyKey), input, () => {
+    const { idempotencyPayload, ...payload } = input;
+    return this.idempotent('importWines', normalizeIdempotencyKey(input.idempotencyKey), payload, () => {
       const normalized = normalizeBatchImport(input);
       const now = new Date().toISOString();
       const wines = normalized.items.map((item) => {
@@ -91,7 +92,11 @@ export class SqliteCellarStore implements CellarStore {
       );
       this.logActivity('batch_add', null, `Imported ${wines.length} wines from ${normalized.source}`);
       return result;
-    }, () => legacyBatchImportPayloads(input));
+    }, () => legacyBatchImportPayloads(input), idempotencyPayload);
+  }
+
+  replayIdempotent(operation: string, key: string, payload: unknown): unknown | undefined {
+    return replayStoredIdempotent(this.db, operation, key, payload);
   }
 
   listWines(query?: string, inStock?: boolean): Wine[] {
@@ -337,8 +342,8 @@ export class SqliteCellarStore implements CellarStore {
     return wine;
   }
 
-  private idempotent<T>(operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => []): T {
-    return runIdempotent(this.db, operation, key, payload, work, legacyPayloads);
+  private idempotent<T>(operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => [], sourcePayload?: unknown): T {
+    return runIdempotent(this.db, operation, key, payload, work, legacyPayloads, sourcePayload);
   }
 
   private allHolds(): WineHold[] {

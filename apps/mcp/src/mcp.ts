@@ -46,9 +46,8 @@ export function runMcpServer(options: McpServerOptions): void {
 
     switch (method) {
       case 'initialize': {
-        const requested = typeof params?.protocolVersion === 'string' ? (params.protocolVersion as string) : SUPPORTED_PROTOCOL;
         reply(id, {
-          protocolVersion: requested,
+          protocolVersion: SUPPORTED_PROTOCOL,
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: options.name, version: options.version }
         });
@@ -101,7 +100,7 @@ export function runMcpServer(options: McpServerOptions): void {
       buffer = buffer.slice(newline + 1);
       newline = buffer.indexOf('\n');
       if (!line) continue;
-      let parsed: JsonRpcMessage | JsonRpcMessage[];
+      let parsed: unknown;
       try {
         parsed = JSON.parse(line);
       } catch {
@@ -109,9 +108,25 @@ export function runMcpServer(options: McpServerOptions): void {
         continue;
       }
       const messages = Array.isArray(parsed) ? parsed : [parsed];
-      for (const m of messages) void dispatch(m);
+      if (messages.length === 0) {
+        fail(null, -32600, 'Invalid Request');
+        continue;
+      }
+      for (const value of messages) {
+        if (!isJsonRpcMessage(value)) {
+          fail(null, -32600, 'Invalid Request');
+          continue;
+        }
+        void dispatch(value).catch(() => fail(value.id ?? null, -32603, 'Internal error'));
+      }
     }
   });
   process.stdin.on('end', () => process.exit(0));
   process.stderr.write(`[ullage-mcp] ${options.name} ready (${options.tools.length} tools)\n`);
+}
+
+function isJsonRpcMessage(value: unknown): value is JsonRpcMessage {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && (value as JsonRpcMessage).jsonrpc === '2.0'
+    && typeof (value as JsonRpcMessage).method === 'string';
 }

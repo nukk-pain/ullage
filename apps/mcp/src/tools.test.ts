@@ -22,6 +22,7 @@ import type {
   WriteOptions
 } from '@ullage/domain';
 import type { CellarStore, CellarExport, CellarSummary } from './cellar-store.js';
+import { SqliteCellarStore } from './store.js';
 import type { McpTool } from './mcp.js';
 import { createUllageTools } from './tools.js';
 
@@ -279,7 +280,10 @@ test('createUllageTools handlers await an injected store and preserve output sha
   const added = await tool(tools, 'add_wine').handler({ name: 'Chablis', quantity: 2, idempotencyKey: 'add-key-1' });
   assert.deepEqual(added, sampleWine);
   assert.deepEqual(store.addedInputs, [{ name: 'Chablis', quantity: 2 }]);
-  assert.deepEqual(store.addedOptions, [{ idempotencyKey: 'add-key-1' }]);
+  assert.deepEqual(store.addedOptions, [{
+    idempotencyKey: 'add-key-1',
+    idempotencyPayload: { name: 'Chablis', quantity: 2, idempotencyKey: 'add-key-1' }
+  }]);
 
   const imported = await tool(tools, 'import_receipt_wines').handler({
     idempotencyKey: 'receipt-key-1',
@@ -291,7 +295,10 @@ test('createUllageTools handlers await an injected store and preserve output sha
     {
       idempotencyKey: 'receipt-key-1', source: 'receipt', sourceId: 'receipt-1',
       purchaseDate: undefined, receiptImageUrl: undefined,
-      items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }]
+      items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }],
+      idempotencyPayload: {
+        idempotencyKey: 'receipt-key-1', sourceId: 'receipt-1', items: [{ name: 'Chablis', quantity: 2, itemKey: 'line-1' }]
+      }
     }
   ]);
 
@@ -340,6 +347,32 @@ test('createUllageTools requires idempotencyKey for confirmed write tools', asyn
   await assert.rejects(async () => tool(tools, 'add_note').handler({ id: 'wine-1', note: 'mineral' }), /idempotencyKey is required/);
   await assert.rejects(async () => tool(tools, 'hold_wine').handler({ id: 'wine-1', reason: 'Anniversary' }), /idempotencyKey is required/);
   await assert.rejects(async () => tool(tools, 'release_hold').handler({ id: 'wine-1' }), /idempotencyKey is required/);
+});
+
+test('add and import replay saved FX writes before calling the exchange-rate converter', async () => {
+  const store = new SqliteCellarStore(':memory:');
+  let conversions = 0;
+  const successfulConverter: PriceConverter = async (args) => {
+    conversions += 1;
+    return { ...args, price: 900, notes: 'converted at saved rate' };
+  };
+  const addArgs = { name: 'FX Barolo', price: 100, currency: 'EUR', idempotencyKey: 'fx-add-replay' };
+  const added = await tool(createUllageTools(store, successfulConverter), 'add_wine').handler(addArgs);
+  const importArgs = {
+    idempotencyKey: 'fx-import-replay', sourceId: 'receipt-1', purchaseDate: '2026-01-02',
+    items: [{ name: 'FX Chablis', price: 50, currency: 'EUR' }]
+  };
+  const imported = await tool(createUllageTools(store, successfulConverter), 'import_receipt_wines').handler(importArgs);
+  assert.equal(conversions, 2);
+
+  const offlineConverter: PriceConverter = async () => { throw new Error('exchange-rate provider offline'); };
+  const addedReplay = await tool(createUllageTools(store, offlineConverter), 'add_wine').handler(addArgs);
+  const importedReplay = await tool(createUllageTools(store, offlineConverter), 'import_receipt_wines').handler(importArgs);
+
+  assert.deepEqual(addedReplay, added);
+  assert.deepEqual(importedReplay, imported);
+  assert.equal(store.listWines().length, 2);
+  store.close();
 });
 
 test('createUllageTools reports missing wines with current error text', async () => {

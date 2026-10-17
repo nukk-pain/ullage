@@ -65,13 +65,13 @@ export class HttpCellarStore implements CellarStore {
   private readonly idempotency = new Map<string, { readonly operation: string; readonly payloadHash: string; readonly result: Promise<unknown> }>();
   private readonly consumeProgress = new Map<string, { readonly payloadHash: string; readonly requestedCount: number; readonly completedCount: number }>();
 
-  constructor(baseUrl: string, headers: HttpHeaders = {}) {
+  constructor(baseUrl: string, headers: HttpHeaders = {}, private readonly timeoutMs = 10_000) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.headers = headers;
   }
 
   async addWine(input: AddWineInput, options: WriteOptions = {}): Promise<Wine> {
-    return this.idempotent('addWine', options.idempotencyKey, input, async () => {
+    return this.idempotent('addWine', options.idempotencyKey, options.idempotencyPayload ?? input, async () => {
       const fields = normalizeAddWine(input);
       if (fields.quantity <= 0) {
         throw new Error('HTTP wine API requires quantity greater than 0 when adding wine');
@@ -151,8 +151,11 @@ export class HttpCellarStore implements CellarStore {
       }
       const existing = await this.getWine(id);
       if (!existing) {
-        if (previousProgress && previousProgress.completedCount > 0) {
-          throw new PartialConsumeError(previousProgress.completedCount, previousProgress.requestedCount, new Error('upstream wine disappeared during consumption'));
+        if (previousProgress) {
+          if (previousProgress.completedCount > 0) {
+            throw new PartialConsumeError(previousProgress.completedCount, previousProgress.requestedCount, new Error('upstream wine disappeared during consumption'));
+          }
+          throw new Error('HTTP wine API returned 404 while the prior consume outcome is unresolved; retry with the same idempotencyKey');
         }
         return undefined;
       }
@@ -264,10 +267,19 @@ export class HttpCellarStore implements CellarStore {
 
   close(): void {}
 
+  replayIdempotent(operation: string, key: string, payload: unknown): Promise<unknown> | undefined {
+    const existing = this.idempotency.get(key);
+    if (!existing) return undefined;
+    if (existing.operation !== operation || existing.payloadHash !== hashPayload(operation, payload)) {
+      throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+    }
+    return existing.result;
+  }
+
   private async request(method: 'GET' | 'POST', path: string, options: StoreRequestOptions = {}): Promise<{ readonly status: number; readonly body: unknown }> {
     const url = new URL(`${this.baseUrl}${path}`);
     const headers = mergeHeaders(this.headers, options.headers);
-    const response = await sendJsonRequest(url, method, { body: options.body, headers });
+    const response = await sendJsonRequest(url, method, { body: options.body, headers, timeoutMs: this.timeoutMs });
     if ((response.status < 200 || response.status >= 300) && !options.okStatuses?.includes(response.status)) {
       throw new HttpStatusError(response.status, method, path);
     }

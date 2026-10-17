@@ -13,6 +13,7 @@ export type UllageConfig =
       readonly backend: 'http';
       readonly baseUrl: string;
       readonly headers: HttpHeaders;
+      readonly timeoutMs: number;
     };
 
 export type UllageEnv = {
@@ -22,6 +23,7 @@ export type UllageEnv = {
   readonly ULLAGE_APPEND_ONLY?: string;
   readonly ULLAGE_HTTP_BASE_URL?: string;
   readonly ULLAGE_HTTP_HEADERS?: string;
+  readonly ULLAGE_HTTP_TIMEOUT_MS?: string;
   readonly ULLAGE_HOME_CURRENCY?: string;
   readonly ULLAGE_FX_RATE_URL?: string;
 };
@@ -50,7 +52,7 @@ export function parseUllageConfig(env: UllageEnv, defaultSqlitePath = createDefa
     case LEGACY_BACKEND:
       throw new ConfigError(backendVariable.name, 'The openclaw backend was renamed to http; set ULLAGE_BACKEND=http and ULLAGE_HTTP_BASE_URL (and ULLAGE_HTTP_HEADERS if your server needs a client header).');
     case 'http':
-      return { backend: 'http', baseUrl: httpBaseUrl(env), headers: httpHeaders(env) };
+      return { backend: 'http', baseUrl: httpBaseUrl(env), headers: httpHeaders(env), timeoutMs: httpTimeoutMs(env) };
     default:
       throw new ConfigError(backendVariable.name, `Unsupported ${backendVariable.name} ${backend}. Supported backends: sqlite, http.`);
   }
@@ -112,6 +114,17 @@ function httpHeaders(env: UllageEnv): HttpHeaders {
     entries.push([name, value]);
   }
   return Object.fromEntries(entries);
+}
+
+function httpTimeoutMs(env: UllageEnv): number {
+  const configured = env.ULLAGE_HTTP_TIMEOUT_MS?.trim();
+  if (!configured) return 10_000;
+  if (!/^\d+$/.test(configured)) throw new ConfigError('ULLAGE_HTTP_TIMEOUT_MS', 'ULLAGE_HTTP_TIMEOUT_MS must be an integer from 1 to 300000.');
+  const timeoutMs = Number(configured);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+    throw new ConfigError('ULLAGE_HTTP_TIMEOUT_MS', 'ULLAGE_HTTP_TIMEOUT_MS must be an integer from 1 to 300000.');
+  }
+  return timeoutMs;
 }
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {

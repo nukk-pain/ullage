@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SqliteCellarStore } from './store.js';
 import { hashPayload } from './sqlite-rows.js';
@@ -417,10 +417,11 @@ test('two processes can concurrently migrate an old schema without losing data',
     `);
     legacy.close();
 
+    const children: ChildProcess[] = [];
     try {
-      const children = [0, 1].map(() => spawn(process.execPath, ['--import', 'tsx', helper, dbPath, gatePath], {
+      children.push(...[0, 1].map(() => spawn(process.execPath, ['--import', 'tsx', helper, dbPath, gatePath], {
         stdio: ['ignore', 'pipe', 'pipe']
-      }));
+      })));
       const outputs = children.map(() => ({ stdout: '', stderr: '' }));
       let readyCount = 0;
       let releaseGate: (() => void) | undefined;
@@ -447,9 +448,9 @@ test('two processes can concurrently migrate an old schema without losing data',
         });
       }));
 
-      await bothReady;
+      await withTimeout(bothReady, 10_000, 'child processes to become ready');
       writeFileSync(gatePath, 'go');
-      const codes = await Promise.all(exits);
+      const codes = await withTimeout(Promise.all(exits), 10_000, 'child processes to finish migration');
       assert.deepEqual(codes, [0, 0], outputs.map((output) => `${output.stdout}${output.stderr}`).join('\n'));
       assert.equal(outputs.every((output) => output.stdout.includes('OK 1')), true);
 
@@ -467,10 +468,41 @@ test('two processes can concurrently migrate an old schema without losing data',
         migrated.close();
       }
     } finally {
+      await stopChildren(children);
       rmSync(dir, { recursive: true, force: true });
     }
   }
 });
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label} after ${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function stopChildren(children: readonly ChildProcess[]): Promise<void> {
+  for (const child of children) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  }
+  await Promise.all(children.map((child) => {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const forceKill = setTimeout(() => child.kill('SIGKILL'), 500);
+      child.once('exit', () => {
+        clearTimeout(forceKill);
+        resolve();
+      });
+    });
+  }));
+}
 
 test('list_wines inStock filter and summary in-stock counts', () => {
   const store = new SqliteCellarStore(':memory:');

@@ -14,7 +14,10 @@ export type HttpHeaders = Readonly<Record<string, string>>;
 export type JsonRequestOptions = {
   readonly body: JsonObject | undefined;
   readonly headers: HttpHeaders;
+  readonly timeoutMs?: number;
 };
+
+export const HTTP_RESPONSE_MAX_BYTES = 1_000_000;
 
 export function sendJsonRequest(url: URL, method: HttpMethod, options: JsonRequestOptions): Promise<HttpResponse> {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -23,10 +26,11 @@ export function sendJsonRequest(url: URL, method: HttpMethod, options: JsonReque
   const bodyText = options.body === undefined ? undefined : JSON.stringify(options.body);
   const headers = requestHeaders(bodyText, options.headers);
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
+  const timeoutMs = options.timeoutMs ?? 10_000;
 
   return new Promise<HttpResponse>((resolve, reject) => {
-    const req = request(url, { method, headers }, (res) => {
-      collectResponse(res).then(
+    const req = request(url, { method, headers, signal: AbortSignal.timeout(timeoutMs) }, (res) => {
+      collectResponse(res, HTTP_RESPONSE_MAX_BYTES).then(
         (text) => resolve({ status: res.statusCode ?? 0, body: parseResponseBody(text) }),
         reject
       );
@@ -49,13 +53,19 @@ function requestHeaders(bodyText: string | undefined, additionalHeaders: HttpHea
   return headers;
 }
 
-async function collectResponse(response: IncomingMessage): Promise<string> {
-  response.setEncoding('utf8');
-  let text = '';
+async function collectResponse(response: IncomingMessage, maxBytes: number): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of response) {
-    if (typeof chunk === 'string') text += chunk;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.byteLength;
+    if (size > maxBytes) {
+      response.destroy();
+      throw new Error(`HTTP response exceeded ${maxBytes} byte limit`);
+    }
+    chunks.push(bytes);
   }
-  return text;
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 function parseResponseBody(text: string): unknown {

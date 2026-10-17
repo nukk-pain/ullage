@@ -103,6 +103,12 @@ The client always sends `Accept: application/json`; JSON requests also include `
 `Content-Length`. Configured headers are added to those requests. The server must implement this
 contract:
 
+HTTP requests time out after 10 seconds by default. Set `ULLAGE_HTTP_TIMEOUT_MS` to an integer from
+1 through 300000 to change the limit. Responses larger than 1,000,000 bytes are rejected. A timeout
+after a consume POST leaves its idempotency key and confirmed progress available for retry in the
+same process; the last POST may have been applied, so retry with the same key and use a server that
+persists `Idempotency-Key` values.
+
 | Request | Request body | Successful response |
 | --- | --- | --- |
 | `GET /wines` | None | `{ "wines": [Wine, ...] }` |

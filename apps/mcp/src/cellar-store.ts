@@ -40,6 +40,7 @@ export type CellarExport = {
 };
 
 export interface CellarStore {
+  replayIdempotent?(operation: string, key: string, payload: unknown): Awaitable<unknown | undefined>;
   addWine(input: AddWineInput, options?: WriteOptions): Awaitable<Wine>;
   importWines(input: BatchImportInput): Awaitable<BatchImportResult>;
   listWines(query?: string, inStock?: boolean): Awaitable<Wine[]>;

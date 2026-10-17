@@ -85,6 +85,7 @@ export type BatchImportInput = {
   readonly purchaseDate?: unknown; // batch-level YYYY-MM-DD; fills items that lack their own
   readonly receiptImageUrl?: unknown;
   readonly items: readonly BatchImportItemInput[];
+  readonly idempotencyPayload?: unknown;
 };
 
 export type NormalizedBatchImportItem = NormalizedWineFields & {
@@ -112,6 +113,7 @@ export type BatchImportResult = {
 
 export type WriteOptions = {
   readonly idempotencyKey?: string;
+  readonly idempotencyPayload?: unknown;
 };
 
 export type HoldInput = WriteOptions & {

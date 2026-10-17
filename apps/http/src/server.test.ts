@@ -98,6 +98,17 @@ test('unknown tools are 404 and malformed bodies are 400', async () => {
   }
 });
 
+test('malformed percent-encoding in a tool path returns 400', async () => {
+  const harness = await start();
+  try {
+    const response = await fetch(`${harness.url}/tools/%E0%A4%A`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'malformed tool path encoding' });
+  } finally {
+    await harness.close();
+  }
+});
+
 test('domain rejections surface as 400 with the domain message', async () => {
   const harness = await start();
   try {

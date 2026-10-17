@@ -55,7 +55,16 @@ export function createToolHttpServer(options: ToolHttpServerOptions): Server {
       return;
     }
 
-    const name = decodeURIComponent(path.slice('/tools/'.length));
+    let name: string;
+    try {
+      name = decodeURIComponent(path.slice('/tools/'.length));
+    } catch (error: unknown) {
+      if (error instanceof URIError) {
+        send(res, 400, { error: 'malformed tool path encoding' });
+        return;
+      }
+      throw error;
+    }
     const tool = toolsByName.get(name);
     if (!tool) {
       send(res, 404, { error: `unknown tool ${name}` });

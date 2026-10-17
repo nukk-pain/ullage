@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
 import { HttpCellarStore } from './http-cellar-store.js';
 import { mappedWine, onlyRequest, requestSummary, serviceWine, startFakeHTTPServer } from './http-cellar-store.test-helper.js';
@@ -114,6 +115,42 @@ test('HttpCellarStore releases pre-POST validation state and retains state after
     assert.equal(store.consumeProgress.has('definite-4xx'), false);
   } finally {
     await server.close();
+  }
+});
+
+test('HttpCellarStore retains consume progress when a POST times out', async () => {
+  let applied = false;
+  let postCount = 0;
+  const server = createServer((request, response) => {
+    request.on('error', () => undefined);
+    if (request.method === 'GET') {
+      request.resume();
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(serviceWine));
+      return;
+    }
+    postCount += 1;
+    request.on('data', () => undefined);
+    request.on('end', () => {
+      applied = true;
+      if (postCount === 1) return;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ sourceWine: { ...serviceWine, quantity: applied ? 1 : 2 } }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('test server did not bind');
+  try {
+    const store = new HttpCellarStore(`http://127.0.0.1:${address.port}`, {}, 30);
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'timeout-consume' }), /abort|timeout/i);
+    assert.equal(store.consumeProgress.has('timeout-consume'), true);
+    const result = await store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'timeout-consume' });
+    assert.equal(result?.quantity, 1);
+    assert.equal(postCount, 2);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
 
@@ -278,6 +315,27 @@ test('HttpCellarStore retries an uncertain first consume to the original clamped
     assert.equal(afterRetry?.quantity, 0);
     assert.equal(quantity, 0);
     assert.equal(posts, 3);
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore does not cache a 404 after an uncertain first consume', async () => {
+  const responses = [
+    { status: 200, body: serviceWine },
+    { status: 503, body: { error: 'applied but response lost' } },
+    { status: 404, body: { error: 'temporarily missing' } },
+    { status: 200, body: serviceWine },
+    { status: 200, body: { sourceWine: { ...serviceWine, quantity: 1 } } }
+  ];
+  const server = await startFakeHTTPServer(() => responses.shift() ?? { status: 500, body: {} });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'recover-404' }), /HTTP 503/);
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'recover-404' }), /prior consume outcome is unresolved/);
+    const result = await store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'recover-404' });
+    assert.equal(result?.quantity, 1);
+    assert.deepEqual(server.requests.map((request) => request.method), ['GET', 'POST', 'GET', 'GET', 'POST']);
   } finally {
     await server.close();
   }
