@@ -131,10 +131,13 @@ reports the confirmed partial count. A lost response can leave the outcome of th
 unknown, so safe retry requires persistent server-side support for the idempotency header.
 
 **Compatibility:** explicitly supplied `null` or empty quantities are rejected; omit `quantity` to
-use the default of one. Original idempotency keys remain local, while upstream `Idempotency-Key`
-headers contain a deterministic ASCII SHA-256 representation (and a per-bottle suffix for consume).
-The HTTP tools transport maps partial consumption to `409 Conflict` and unsupported HTTP-backend
-operations to `501 Not Implemented`, preserving each error message.
+use the default of one. Date fields accept real calendar dates and, when a time is included, require
+`HH:MM[:SS[.fff]]` followed by an optional `Z` or `±HH:MM` offset. Integer fields such as `vintage`,
+`limit`, and `offset` reject booleans, arrays, and objects. Beginning with this release, the HTTP
+adapter sends `Idempotency-Key` headers in the `ullage-v1-*` SHA-256 format (with a per-bottle suffix
+for consume); the previous public release sent no such header. Original idempotency keys remain
+local. The HTTP tools transport maps partial consumption to `409 Conflict` and unsupported
+HTTP-backend operations to `501 Not Implemented`, preserving each error message.
 
 Normal installs should leave backend variables unset. Alternate storage adapters are private or
 advanced integrations selected only by environment variable, and are not part of the zero-setup

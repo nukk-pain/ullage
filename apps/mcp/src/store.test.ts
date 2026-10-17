@@ -5,6 +5,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteCellarStore } from './store.js';
+import { hashPayload } from './sqlite-rows.js';
+import { normalizeBatchImport } from '@ullage/domain';
 
 test('add, list, and summarize wines (rich fields)', () => {
   const store = new SqliteCellarStore(':memory:');
@@ -393,6 +395,60 @@ test('legacy timestamp imports replay by the same key and request after reopenin
     const replay = reopened.importWines(input);
     assert.equal(replay.id, original.id);
     assert.equal(reopened.listWines().length, 1);
+  } finally {
+    reopened.close();
+  }
+});
+
+test('legacy imports with invalid dates and null or empty quantities replay before current validation', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'ullage-legacy-import-')), 'cellar.db');
+  const store = new SqliteCellarStore(path);
+  const cases = [
+    { idempotencyKey: 'legacy-invalid-date', source: 'receipt' as const, purchaseDate: '2026-02-31', items: [{ name: 'Legacy date', quantity: 1 }] },
+    { idempotencyKey: 'legacy-null-quantity', source: 'receipt' as const, items: [{ name: 'Legacy null', quantity: null }] },
+    { idempotencyKey: 'legacy-empty-quantity', source: 'receipt' as const, items: [{ name: 'Legacy empty', quantity: '' }] }
+  ];
+  const normalizedLegacy = cases.map((input) => {
+    const legacyDate = typeof input.purchaseDate === 'string' ? input.purchaseDate : null;
+    const normalized = normalizeBatchImport({
+      ...input,
+      purchaseDate: legacyDate === null ? undefined : '2026-03-14',
+      items: input.items.map((item) => ({ ...item, quantity: item.quantity === null || item.quantity === '' ? undefined : item.quantity }))
+    });
+    return {
+      ...normalized,
+      purchaseDate: legacyDate,
+      items: normalized.items.map((item) => ({ ...item, purchaseDate: legacyDate ?? item.purchaseDate }))
+    };
+  });
+  const expectedResults = new Map<string, { id: string; name: string }>();
+  for (const [index, input] of cases.entries()) {
+    const seed = store.importWines({ ...input, idempotencyKey: `seed-${input.idempotencyKey}`, purchaseDate: '2026-03-14', items: input.items.map((item) => ({ ...item, quantity: item.quantity === null || item.quantity === '' ? undefined : item.quantity })) });
+    const seedWines = seed.wines.map((wine) => ({ ...wine, purchaseDate: input.purchaseDate ?? wine.purchaseDate }));
+    const result = { ...seed, purchaseDate: input.purchaseDate ?? null, wines: seedWines };
+    const raw = new Database(path);
+    const seedRow = raw.prepare('SELECT result_json, created_at FROM idempotency_keys WHERE idempotency_key = ?').get(`seed-${input.idempotencyKey}`) as { result_json: string; created_at: string };
+    const legacyResultJson = JSON.stringify({ kind: 'value', result });
+    raw.prepare('UPDATE batch_imports SET result_json = ? WHERE id = ?').run(JSON.stringify(result), seed.id);
+    raw.prepare('INSERT INTO idempotency_keys (idempotency_key, operation, payload_hash, result_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
+      input.idempotencyKey,
+      'importWines',
+      hashPayload('importWines', normalizedLegacy[index]),
+      legacyResultJson,
+      seedRow.created_at
+    );
+    raw.close();
+    expectedResults.set(input.idempotencyKey, { id: seed.id, name: input.items[0]?.name ?? '' });
+  }
+  store.close();
+  const reopened = new SqliteCellarStore(path);
+  try {
+    for (const input of cases) {
+      const expected = expectedResults.get(input.idempotencyKey);
+      const replay = reopened.importWines(input);
+      assert.equal(replay.id, expected?.id);
+      assert.equal(reopened.listWines(expected?.name).length, 1);
+    }
   } finally {
     reopened.close();
   }

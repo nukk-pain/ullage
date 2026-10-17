@@ -253,8 +253,9 @@ export function optionalNumber(value: unknown): number | null {
 export function optionalDate(value: unknown, field = 'date'): string | null {
   if (value === undefined || value === null || value === '') return null;
   const s = optionalString(value);
-  const datePart = s?.match(/^(\d{4}-\d{2}-\d{2})(?:[ T].+)?$/)?.[1];
-  if (datePart === undefined) throw new Error(`${field} must be a valid YYYY-MM-DD date`);
+  const dateTime = parseDateTimeInput(s);
+  const datePart = dateTime?.date;
+  if (dateTime === null || datePart === undefined) throw new Error(`${field} must be a valid YYYY-MM-DD date`);
   const parsed = new Date(`${datePart}T00:00:00.000Z`);
   if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== datePart) {
     throw new Error(`${field} must be a valid YYYY-MM-DD date`);
@@ -332,12 +333,33 @@ export function optionalTimestamp(value: unknown, field: string): string | null 
   const s = optionalString(value);
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${optionalDate(s, field)}T00:00:00.000Z`;
-  const datePart = /^(\d{4}-\d{2}-\d{2})[T ]/.exec(s)?.[1];
-  if (datePart === undefined) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
-  optionalDate(datePart, field);
-  const parsed = new Date(s.replace(' ', 'T'));
+  const dateTime = parseDateTimeInput(s);
+  if (dateTime === null || dateTime.time === null) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
+  optionalDate(dateTime.date, field);
+  const parsed = new Date(`${dateTime.date}T${dateTime.time}`);
   if (Number.isNaN(parsed.getTime())) throw new Error(`${field} must be YYYY-MM-DD or an ISO8601 timestamp`);
   return parsed.toISOString();
+}
+
+function parseDateTimeInput(value: string | null): { readonly date: string; readonly time: string | null } | null {
+  if (value === null) return null;
+  const match = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{3}))?)?(Z|[+-]\d{2}:\d{2})?)?$/.exec(value);
+  if (!match) return null;
+  const [, date, hour, minute, second = '00', fraction = '', zone = ''] = match;
+  if (hour === undefined) return { date, time: null };
+  const h = Number(hour);
+  const m = Number(minute);
+  const sec = Number(second);
+  if (h > 23 || m > 59 || sec > 59) return null;
+  if (zone !== '' && zone !== 'Z') {
+    const offset = /([+-])(\d{2}):(\d{2})/.exec(zone);
+    if (!offset) return null;
+    const hours = Number(offset[2]);
+    const minutes = Number(offset[3]);
+    if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) return null;
+  }
+  const milliseconds = fraction ? `.${fraction.padEnd(3, '0')}` : '';
+  return { date, time: `${hour}:${minute}:${second}${milliseconds}${zone}` };
 }
 
 const APPEND_ONLY_FORBIDDEN_FIELDS = new Set<keyof AddWineInput>([
@@ -443,17 +465,20 @@ export function resolveWineByName(wines: readonly Wine[], rawQuery: unknown): Re
   const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
   if (!query) return { status: 'none', query };
 
-  let effectiveQuery = query;
-  let candidates = filterWines(wines, query);
-  if (candidates.length === 0) {
-    const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
-    if (vintageMatch === null) return { status: 'none', query };
-    effectiveQuery = vintageMatch[1];
-    const requestedVintage = Number(vintageMatch[2]);
-    candidates = filterWines(wines, effectiveQuery).filter((wine) => wine.vintage === requestedVintage);
-  }
+  const queryKey = normalizeMatchText(query);
+  const wholeNameMatches = wines.filter((wine) => normalizeMatchText(wine.name) === queryKey);
+  if (wholeNameMatches.length > 0) return resolveWineCandidates(wines, query, wholeNameMatches, query);
+
+  const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
+  const effectiveQuery = vintageMatch?.[1] ?? query;
+  let candidates = filterWines(wines, effectiveQuery);
+  if (vintageMatch !== null) candidates = candidates.filter((wine) => wine.vintage === Number(vintageMatch[2]));
   if (candidates.length === 0) return { status: 'none', query };
 
+  return resolveWineCandidates(wines, query, candidates, effectiveQuery);
+}
+
+function resolveWineCandidates(wines: readonly Wine[], query: string, candidates: readonly Wine[], effectiveQuery: string): ResolveWineResult {
   const ranked = [...candidates].sort((left, right) => {
     const stock = Number(right.quantity > 0) - Number(left.quantity > 0);
     if (stock !== 0) return stock;

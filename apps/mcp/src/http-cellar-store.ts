@@ -53,6 +53,12 @@ export class UnsupportedHttpOperationError extends Error {
   }
 }
 
+class HttpStatusError extends Error {
+  constructor(readonly status: number, method: 'GET' | 'POST', path: string) {
+    super(`HTTP wine API ${method} ${path} failed with HTTP ${status}: upstream error response omitted`);
+  }
+}
+
 export class HttpCellarStore implements CellarStore {
   private readonly baseUrl: string;
   private readonly headers: HttpHeaders;
@@ -147,9 +153,6 @@ export class HttpCellarStore implements CellarStore {
       if (existing.quantity <= 0 && previousProgress === undefined) throw new Error(`No bottles of ${describeWine(existing)} left to open`);
       const targetCount = previousProgress?.requestedCount ?? Math.min(requested, existing.quantity);
       let completedCount = previousProgress?.completedCount ?? 0;
-      if (key !== undefined && previousProgress === undefined) {
-        this.consumeProgress.set(key, { payloadHash, requestedCount: targetCount, completedCount: 0 });
-      }
 
       const payload: JsonObject = {};
       const rating = optionalNumber(input.rating);
@@ -157,6 +160,10 @@ export class HttpCellarStore implements CellarStore {
       const notes = optionalString(input.notes);
       putIfPresent(payload, 'note', notes);
       putIfPresent(payload, 'consumed_at', optionalTimestamp(input.consumedAt, 'consumedAt'));
+
+      if (key !== undefined && previousProgress === undefined) {
+        this.consumeProgress.set(key, { payloadHash, requestedCount: targetCount, completedCount: 0 });
+      }
 
       let latest: Wine = existing;
       for (let i = completedCount; i < targetCount; i += 1) {
@@ -171,6 +178,7 @@ export class HttpCellarStore implements CellarStore {
           });
           if (response.status === 404) {
             if (completedCount > 0) throw new PartialConsumeError(completedCount, targetCount, new Error('upstream wine disappeared during consumption'));
+            if (key !== undefined) this.consumeProgress.delete(key);
             return undefined;
           }
           latest = wineFromConsumeResponse(response.body);
@@ -178,6 +186,9 @@ export class HttpCellarStore implements CellarStore {
           if (key !== undefined) this.consumeProgress.set(key, { payloadHash, requestedCount: targetCount, completedCount });
         } catch (error) {
           if (error instanceof PartialConsumeError) throw error;
+          if (completedCount === 0 && key !== undefined && error instanceof HttpStatusError && error.status >= 400 && error.status < 500) {
+            this.consumeProgress.delete(key);
+          }
           if (completedCount > 0) throw new PartialConsumeError(completedCount, targetCount, error);
           throw error;
         }
@@ -253,7 +264,7 @@ export class HttpCellarStore implements CellarStore {
     const headers = mergeHeaders(this.headers, options.headers);
     const response = await sendJsonRequest(url, method, { body: options.body, headers });
     if ((response.status < 200 || response.status >= 300) && !options.okStatuses?.includes(response.status)) {
-      throw new Error(`HTTP wine API ${method} ${path} failed with HTTP ${response.status}: upstream error response omitted`);
+      throw new HttpStatusError(response.status, method, path);
     }
     return response;
   }
@@ -289,6 +300,6 @@ function mergeHeaders(base: HttpHeaders, additional: HttpHeaders | undefined): H
 }
 
 function upstreamIdempotencyKey(operation: 'add' | 'consume', originalKey: string, bottle?: number): string {
-  const digest = createHash('sha256').update(originalKey, 'utf8').digest('hex');
+  const digest = createHash('sha256').update(JSON.stringify(originalKey), 'utf8').digest('hex');
   return `ullage-v1-${operation}-${digest}${bottle === undefined ? '' : `-${bottle}`}`;
 }

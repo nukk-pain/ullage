@@ -7,6 +7,7 @@ import { initializeSqliteSchema, runIdempotent } from './sqlite-schema.js';
 import {
   consumptionToTasting,
   describe,
+  hashPayload,
   parseImportRow,
   rowToActivity,
   rowToConsumption,
@@ -26,6 +27,7 @@ import {
   forbiddenAppendOnlyFields,
   normalizeAddWine,
   normalizeBatchImport,
+  normalizeIdempotencyKey,
   normalizeQuantity,
   normalizeRecordTasting,
   normalizeTastingQuery,
@@ -68,8 +70,8 @@ export class SqliteCellarStore implements CellarStore {
   }
 
   importWines(input: BatchImportInput): BatchImportResult {
-    const normalized = normalizeBatchImport(input);
-    return this.idempotent('importWines', normalized.idempotencyKey, normalized, () => {
+    return this.idempotent('importWines', normalizeIdempotencyKey(input.idempotencyKey), input, () => {
+      const normalized = normalizeBatchImport(input);
       const now = new Date().toISOString();
       const wines = normalized.items.map((item) => {
         const { itemKey: _itemKey, ...fields } = item;
@@ -89,7 +91,7 @@ export class SqliteCellarStore implements CellarStore {
       );
       this.logActivity('batch_add', null, `Imported ${wines.length} wines from ${normalized.source}`);
       return result;
-    });
+    }, () => legacyBatchImportPayloads(input));
   }
 
   listWines(query?: string, inStock?: boolean): Wine[] {
@@ -335,8 +337,8 @@ export class SqliteCellarStore implements CellarStore {
     return wine;
   }
 
-  private idempotent<T>(operation: string, key: string | undefined, payload: unknown, work: () => T): T {
-    return runIdempotent(this.db, operation, key, payload, work);
+  private idempotent<T>(operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => []): T {
+    return runIdempotent(this.db, operation, key, payload, work, legacyPayloads);
   }
 
   private allHolds(): WineHold[] {
@@ -346,4 +348,37 @@ export class SqliteCellarStore implements CellarStore {
   private logActivity(action: ActivityAction, wineId: string | null, summary: string): void {
     this.db.prepare('INSERT INTO activity_log (id, action, wine_id, summary, created_at) VALUES (?, ?, ?, ?, ?)').run(randomUUID(), action, wineId, summary, new Date().toISOString());
   }
+}
+
+function legacyBatchImportPayloads(input: BatchImportInput): readonly unknown[] {
+  try {
+    return [normalizeLegacyBatchImport(input)];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeLegacyBatchImport(input: BatchImportInput): ReturnType<typeof normalizeBatchImport> {
+  const legacyDate = (value: unknown): string | null => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string') throw new Error('invalid legacy date');
+    const date = value.trim().match(/^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/)?.[1];
+    if (!date) throw new Error('invalid legacy date');
+    return date;
+  };
+  const purchaseDate = legacyDate(input.purchaseDate);
+  const items = input.items.map((item) => ({
+    ...item,
+    purchaseDate: undefined,
+    ...(item.quantity === null || item.quantity === '' ? { quantity: undefined } : {})
+  }));
+  const normalized = normalizeBatchImport({ ...input, purchaseDate: undefined, items });
+  return {
+    ...normalized,
+    purchaseDate,
+    items: normalized.items.map((item, index) => ({
+      ...item,
+      purchaseDate: legacyDate(input.items[index]?.purchaseDate) ?? purchaseDate
+    }))
+  };
 }

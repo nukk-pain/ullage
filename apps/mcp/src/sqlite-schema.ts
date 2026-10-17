@@ -55,12 +55,14 @@ function migrateSqliteSchema(db: Database.Database): void {
     WHERE image_url IS NULL AND notes LIKE '%Source image: %'`);
 }
 
-export function runIdempotent<T>(db: Database.Database, operation: string, key: string | undefined, payload: unknown, work: () => T): T {
+export function runIdempotent<T>(db: Database.Database, operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => []): T {
   if (key === undefined || key.trim().length === 0) return db.transaction(work)();
   const payloadHash = hashPayload(operation, payload);
   const existing = db.prepare('SELECT * FROM idempotency_keys WHERE idempotency_key = ?').get(key) as IdempotencyRow | undefined;
   if (existing) {
-    if (existing.operation !== operation || existing.payload_hash !== payloadHash) throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+    if (existing.operation !== operation || (existing.payload_hash !== payloadHash && !legacyPayloads().some((legacyPayload) => hashPayload(operation, legacyPayload) === existing.payload_hash))) {
+      throw new Error(`idempotencyKey ${key} was already used with a different payload`);
+    }
     return decodeResult(existing.result_json) as T;
   }
   return db.transaction(() => {

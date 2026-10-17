@@ -44,9 +44,13 @@ working over that data. By default there is no server, no token, and no Docker â
 SQLite adapter file you own.
 
 **Input and error compatibility:** explicitly supplied `null` or empty quantities are rejected;
-omit `quantity` to use the default of one. The HTTP adapter sends ASCII SHA-256 representations of
-idempotency keys upstream while keeping the original key for local replay checks. The HTTP tools
-transport returns `409` for partial consumption and `501` for operations unsupported by its backend.
+omit `quantity` to use the default of one. Date fields accept real calendar dates and, when a time is
+included, require `HH:MM[:SS[.fff]]` followed by an optional `Z` or `Â±HH:MM` offset. Integer fields
+such as `vintage`, `limit`, and `offset` reject booleans, arrays, and objects. Beginning with this
+release, the HTTP adapter sends `Idempotency-Key` headers in the `ullage-v1-*` SHA-256 format while
+keeping the original key for local replay checks; the previous public release sent no such header.
+The HTTP tools transport returns `409` for partial consumption and `501` for operations unsupported
+by its backend.
 
 The public install path is intentionally independent of any external wine API. Experimental
 alternate storage adapters are selected only by environment variable and are not needed for normal

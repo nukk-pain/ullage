@@ -76,6 +76,28 @@ test('HttpCellarStore rejects zero quantity consume before making a consume requ
   }
 });
 
+test('HttpCellarStore releases progress after validation and definite first-request failures', async () => {
+  let postStatus = 400;
+  const server = await startFakeHTTPServer((request) => {
+    if (request.method === 'GET') return { status: 200, body: serviceWine };
+    if (postStatus === 200) return { status: 200, body: { sourceWine: serviceWine } };
+    return { status: postStatus, body: { error: 'rejected' } };
+  });
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1, consumedAt: 'invalid' }, { idempotencyKey: 'retry-date' }));
+    postStatus = 200;
+    await store.consumeWine('wine-1', { quantity: 1, consumedAt: '2026-03-14' }, { idempotencyKey: 'retry-date' });
+    assert.equal(server.requests.filter((request) => request.method === 'POST').length, 1);
+
+    postStatus = 400;
+    await assert.rejects(() => store.consumeWine('wine-1', { quantity: 1 }, { idempotencyKey: 'definite-4xx' }));
+    assert.equal(store.consumeProgress.has('definite-4xx'), false);
+  } finally {
+    await server.close();
+  }
+});
+
 test('HttpCellarStore maps getWine from GET /wines/:id', async () => {
   const server = await startFakeHTTPServer(() => ({ status: 200, body: serviceWine }));
   try {
@@ -196,6 +218,19 @@ test('HttpCellarStore encodes Unicode and long idempotency keys as stable ASCII 
     const asciiStore = new HttpCellarStore(server.baseUrl);
     await asciiStore.addWine({ name: 'ASCII', quantity: 1 }, { idempotencyKey: 'ascii-key' });
     assert.match(server.requests.at(-1)?.headers['idempotency-key'] ?? '', /^ullage-v1-add-[a-f0-9]{64}$/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('HttpCellarStore keeps distinct lone surrogate idempotency keys distinct upstream', async () => {
+  const server = await startFakeHTTPServer(() => ({ status: 200, body: serviceWine }));
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+    await store.addWine({ name: 'First' }, { idempotencyKey: '\ud800' });
+    await store.addWine({ name: 'Second' }, { idempotencyKey: '\ud801' });
+    const keys = server.requests.map((request) => request.headers['idempotency-key']);
+    assert.notEqual(keys[0], keys[1]);
   } finally {
     await server.close();
   }

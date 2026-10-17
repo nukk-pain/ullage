@@ -63,15 +63,23 @@ test('optionalDate normalizes to YYYY-MM-DD or null', () => {
   assert.throws(() => optionalDate('2030-02-31'), /valid YYYY-MM-DD date/);
   assert.throws(() => optionalDate('2026-03-14suffix'), /valid YYYY-MM-DD date/);
   assert.throws(() => optionalDate('2026-02-31 15:42'), /valid YYYY-MM-DD date/);
+  for (const invalid of ['2026-03-14 25:99', '2026-03-14Tgarbage', '2026-03-14T23:00:00+25:00', '2026-03-14 15:42:99', '2026-03-14T10:00:00.1Z']) {
+    assert.throws(() => optionalDate(invalid), /valid YYYY-MM-DD date/);
+  }
   assert.throws(() => normalizeBatchImport({
     idempotencyKey: 'invalid-date-import', source: 'receipt', purchaseDate: '2026-02-31', items: [{ name: 'Barolo' }]
   }), /valid YYYY-MM-DD date/);
   assert.equal(optionalInt('2019'), 2019);
   assert.throws(() => optionalInt('nope', 'vintage'), /vintage must be a safe integer/);
+  for (const value of [true, [], {}]) assert.throws(() => optionalInt(value, 'limit'), /limit must be a safe integer/);
 });
 
 test('optionalTimestamp normalizes real calendar dates with a space separator', () => {
   assert.equal(optionalTimestamp('2026-03-14 15:42', 'consumedAt'), new Date('2026-03-14 15:42').toISOString());
+  assert.equal(optionalTimestamp('2026-03-14T10:00:00.000Z', 'consumedAt'), '2026-03-14T10:00:00.000Z');
+  for (const invalid of ['2026-03-14 25:99', '2026-03-14Tgarbage', '2026-03-14T23:00:00+25:00', '2026-03-14 15:42:99', '2026-03-14T10:00:00.1Z']) {
+    assert.throws(() => optionalTimestamp(invalid, 'consumedAt'), /consumedAt/);
+  }
   assert.throws(() => optionalTimestamp('2026-02-31 15:42', 'consumedAt'), /consumedAt/);
 });
 
@@ -207,8 +215,25 @@ test('resolveWineByName resolves exact, surfaces ambiguity, and splits a trailin
   assert.equal(resolveWineByName(wines, 'Rioja 2015').status, 'none');
   const wrongVintage = resolveWineByName([wineFixture({ id: 'w-4', name: 'Chablis', vintage: 2019 })], 'Chablis 2021');
   assert.equal(wrongVintage.status, 'none');
+  const fuzzyCoexists = resolveWineByName([
+    wineFixture({ id: 'wrong-vintage', name: 'Chablis 2021 Reserve', vintage: 2019 }),
+    wineFixture({ id: 'target-vintage', name: 'Chablis', vintage: 2021 })
+  ], 'Chablis 2021');
+  assert.equal(fuzzyCoexists.status === 'resolved' && fuzzyCoexists.wine.id, 'target-vintage');
+  const fuzzyOnly = resolveWineByName([wineFixture({ id: 'wrong-vintage', name: 'Chablis 2021 Reserve', vintage: 2019 })], 'Chablis 2021');
+  assert.equal(fuzzyOnly.status, 'none');
   const yearName = resolveWineByName([wineFixture({ id: 'w-5', name: 'Barolo 2017', vintage: null })], 'Barolo 2017');
   assert.equal(yearName.status, 'resolved');
   assert.equal(yearName.status === 'resolved' && yearName.wine.id, 'w-5');
   assert.equal(yearName.status === 'resolved' && yearName.matchKind, 'exact');
+  const vintageName = resolveWineByName([
+    wineFixture({ id: 'name-exact', name: 'Barolo 2017', vintage: null }),
+    wineFixture({ id: 'vintage-exact', name: 'Barolo', vintage: 2017 })
+  ], 'Barolo 2017');
+  assert.equal(vintageName.status === 'resolved' && vintageName.wine.id, 'name-exact');
+  const sameVintageFuzzyBoundary = resolveWineByName([
+    wineFixture({ id: 'grand-cru', name: 'Chablis 2019 Grand Cru', vintage: 2019 }),
+    wineFixture({ id: 'base-name', name: 'Chablis', vintage: 2019 })
+  ], 'Chablis 2019');
+  assert.equal(sameVintageFuzzyBoundary.status === 'resolved' && sameVintageFuzzyBoundary.wine.id, 'base-name');
 });
