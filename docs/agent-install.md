@@ -82,13 +82,46 @@ Keep the sidecars beside the copied database until SQLite opens it. Install or u
 2. Create a readable SQLite backup before changing the checkout, then confirm the backup integrity, wine row count, and bottle total against the source.
 3. Call `cellar_summary` and record its wine count before the upgrade.
 4. In the existing checkout, run `git fetch origin`.
-5. Run `git status --short` and inspect local commits with `git rev-list --left-right --count HEAD...origin/main`; ask the user before proceeding if there are local file changes or local commits they need.
-6. Before starting the updated server, inspect the existing MCP environment for both `ULLAGE_STORE` and `ULLAGE_BACKEND`. The code uses any non-empty `ULLAGE_STORE` value before `ULLAGE_BACKEND`; when changing backends, remove `ULLAGE_STORE` or set it to the same backend value so it cannot override the new setting.
-7. If the existing environment has `ULLAGE_BACKEND=openclaw`, change it to `ULLAGE_BACKEND=http` before starting the updated server and set `ULLAGE_HTTP_BASE_URL` to the HTTP service URL supplied by the user. `ULLAGE_HTTP_BASE_URL` is required for HTTP; do not start the new server until it is set. Do not invent the URL or credentials.
-8. Run `npm ci && npm run build` from the checkout.
-9. Replace the running MCP process and start a new agent session. For Hermes, start a fresh session or restart the process that owns the MCP connection. For OpenClaw, restart the Gateway that owns the MCP connection with `openclaw gateway restart`; `openclaw mcp reload` refreshes only runtimes owned by that CLI process and does not refresh a separate Gateway. See [OpenClaw MCP connection guidance](https://docs.openclaw.ai/tools/mcp) and [OpenClaw gateway restart guidance](https://docs.openclaw.ai/cli/gateway/restart-and-supervision).
-10. Call `cellar_summary` and compare the wine count with the count recorded before the update. Older databases with duplicate active holds can report the same wine more than once before migration, so a changed summary count may be caused by that cleanup. If the summary counts differ, compare `SELECT count(*) FROM wines;` and `SELECT coalesce(sum(quantity), 0) FROM wines;` before and after to confirm the wine rows and bottle total.
-11. Tell the user what happened during migration: existing wine and event records remain in place; if duplicate active holds exist for one wine, the newest active hold remains and older ones are released; legacy tasting image URLs are copied into their image field once; and idempotency metadata columns are added. Also explain the breaking changes: the old `openclaw` backend name is now `http`, and explicitly sending a null or empty `quantity` is rejected. Omit details that do not apply to the user's configured backend or database.
+5. Check for local changes and commits before applying the fetched update:
+
+   ```bash
+   git status --porcelain
+   git rev-list --left-right --count HEAD...origin/main
+   ```
+
+   Stop and ask the user before continuing if the working tree is not clean or if there are local-only commits that must be kept. On a checkout with normal history and no local-only commits, fast-forward it:
+
+   ```bash
+   git merge --ff-only origin/main
+   ```
+
+   If fast-forward fails because this checkout predates the 2026-10-17 history rewrite, first confirm again that `git status --porcelain` is empty and inspect the commits shown by `git log --oneline origin/main..HEAD`. Reset only when those commits are solely the old pre-rewrite history and there are no local changes or local work to preserve:
+
+   ```bash
+   git reset --hard origin/main
+   ```
+
+   If you cannot confirm that nothing local needs to be kept, stop and ask the user. Do not reset a dirty checkout or discard local work.
+6. Before building or replacing a running process, confirm that the checkout is exactly at the fetched target:
+
+   ```bash
+   test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+   ```
+
+   Stop if this check fails; do not build or restart from a different commit.
+7. Before starting the updated server, inspect the existing MCP environment for both `ULLAGE_STORE` and `ULLAGE_BACKEND`. The code uses any non-empty `ULLAGE_STORE` value before `ULLAGE_BACKEND`; when changing backends, remove `ULLAGE_STORE` or set it to the same backend value so it cannot override the new setting.
+8. If the existing environment has `ULLAGE_BACKEND=openclaw`, change it to `ULLAGE_BACKEND=http` before starting the updated server and set `ULLAGE_HTTP_BASE_URL` to the HTTP service URL supplied by the user. `ULLAGE_HTTP_BASE_URL` is required for HTTP; do not start the new server until it is set. Do not invent the URL or credentials.
+9. Run `npm ci && npm run build` from the checkout.
+10. Replace the running MCP process and start a new agent session. For Hermes, start a fresh session or restart the process that owns the MCP connection. For OpenClaw, restart the Gateway that owns the MCP connection with `openclaw gateway restart`; `openclaw mcp reload` refreshes only runtimes owned by that CLI process and does not refresh a separate Gateway. See [OpenClaw MCP connection guidance](https://docs.openclaw.ai/tools/mcp) and [OpenClaw gateway restart guidance](https://docs.openclaw.ai/cli/gateway/restart-and-supervision).
+11. Call `cellar_summary` and compare the wine count with the count recorded before the update. This count alone does not prove that the new version is running: duplicate active holds can change the summary after migration, while a stale version may return the same count. If SQLite CLI (`sqlite3`) is available, also check the configured database for the migration schema:
+
+   ```bash
+   DB="${DB:-${ULLAGE_DB:-$HOME/.ullage/cellar.db}}"
+   sqlite3 "$DB" "PRAGMA table_info(idempotency_keys); SELECT key, value FROM schema_meta WHERE key = 'tasting-image-url-backfill-v1';"
+   ```
+
+   Confirm that `idempotency_keys` includes `hash_version` and that `schema_meta` reports `tasting-image-url-backfill-v1` as `complete`. These markers are created by the current migration code. If `sqlite3` is unavailable, skip this supplemental database check; do not treat the `cellar_summary` comparison by itself as proof of the running version. If the summary counts differ, compare `SELECT count(*) FROM wines;` and `SELECT coalesce(sum(quantity), 0) FROM wines;` before and after to confirm the wine rows and bottle total.
+12. Tell the user what happened during migration: existing wine and event records remain in place; if duplicate active holds exist for one wine, the newest active hold remains and older ones are released; legacy tasting image URLs are copied into their image field once; and idempotency metadata columns are added. Also explain the breaking changes: the old `openclaw` backend name is now `http`, and explicitly sending a null or empty `quantity` is rejected. Omit details that do not apply to the user's configured backend or database.
 
 ## 4. MCP tools
 
