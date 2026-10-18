@@ -22,7 +22,8 @@ You are an AI agent installing or operating ullage for the user. SQLite is the d
    ```
 
 3. From the checkout root, run `pwd` and use its output as `<REPO>`, the absolute path to the cloned repository. The server entry point is `<REPO>/apps/mcp/dist/index.js`.
-4. Register ullage with the runner:
+4. Optionally ask the user which home currency to use before registration. If the user answers, convert the answer to its three-letter ISO 4217 code and pass `ULLAGE_HOME_CURRENCY=<CODE>` as a server environment variable; if the user does not know or does not want to choose, omit it.
+5. Register ullage with the runner:
 
    - **OpenClaw:** `openclaw mcp add ullage --command node --arg <REPO>/apps/mcp/dist/index.js`
      Add one `--env KEY=VALUE` for each environment variable the server needs. OpenClaw probes the server before it saves the definition. The CLI manages the OpenClaw `mcp.servers` configuration; a generic `mcpServers` JSON file is not an OpenClaw configuration format.
@@ -41,8 +42,8 @@ You are an AI agent installing or operating ullage for the user. SQLite is the d
      }
      ```
 
-5. Start a new runner session so it discovers the tools.
-6. Call `cellar_summary` to verify that the MCP server starts and can read the cellar.
+6. Start a new runner session so it discovers the tools.
+7. Call `cellar_summary` to verify that the MCP server starts and can read the cellar.
 
 The default SQLite adapter needs no token, Docker, or separate server. Do not configure an external wine API for a normal install. ullage does not perform OCR: read label and receipt images with your own vision, confirm uncertain rows with the user, and send only confirmed wine data to an import tool.
 
@@ -163,6 +164,31 @@ ullage exposes these 22 tools:
 - For `consume_wine` and `hold_wine`, resolve a wine name first. If `resolve_wine` returns multiple candidates, ask the user to choose before writing. A held bottle cannot be consumed until the user confirms release.
 
 ## 6. Currency and exchange rates
+
+To set or change the home currency after installation, follow [Set or change the home currency](#set-or-change-the-home-currency) first.
+
+### Set or change the home currency
+
+When the user asks to set their currency (for example, “내 통화를 원화로 설정해 줘” or “Set my currency to EUR”), update the environment of the existing `ullage` server:
+
+1. Convert the user's requested currency to its three-letter ISO 4217 code, such as `KRW` for Korean won.
+2. Ask the user which currency they mean if their request does not identify one unambiguously.
+3. Identify the runner that owns the existing `ullage` MCP connection.
+4. For OpenClaw, inspect the saved definition with `openclaw mcp show ullage --json`.
+5. For OpenClaw, confirm the syntax with `openclaw mcp set --help`, `openclaw mcp show --help`, and `openclaw docs "MCP registry set reload"`.
+6. For OpenClaw, set the saved server definition with `openclaw mcp set ullage '<JSON>'`, using the current definition as the JSON object and adding or changing only `env.ULLAGE_HOME_CURRENCY` to the requested code.
+7. For OpenClaw, preserve the existing `command`, `args`, `cwd`, every other environment variable (including `ULLAGE_DB` and `ULLAGE_APPEND_ONLY`), and all other server fields in that JSON object.
+8. For Hermes, inspect the current definition with `hermes mcp list` and confirm the available syntax with `hermes mcp --help`, `hermes mcp add --help`, and `hermes mcp remove --help`.
+9. For Hermes, record the existing `command`, all arguments, and every environment variable before removing the server definition, keeping secret values out of the conversation and report.
+10. For Hermes, remove the existing definition with `hermes mcp remove ullage` when its configuration does not provide a supported environment-only update command.
+11. For Hermes, recreate the same server with `hermes mcp add ullage --command <COMMAND> --env ULLAGE_HOME_CURRENCY=<CODE> --env <EXISTING_KEY=VALUE> --args <EXISTING_ARGS...>`, retaining its original command, arguments, and all existing environment variables.
+12. For a generic MCP client, add or change `ULLAGE_HOME_CURRENCY` in the `ullage` server's environment while preserving its command, arguments, and other environment variables.
+13. Restart the runner session or process that owns the MCP connection so it starts Ullage with the updated environment.
+14. For an OpenClaw Gateway-owned connection, restart the owning Gateway with `openclaw gateway restart`; `openclaw mcp reload` refreshes cached runtimes in the current CLI process only, so it does not update a separate Gateway process.
+15. Call `get_exchange_rate` for a foreign currency such as `USD` after restart and confirm that its result reports the requested home currency.
+16. Tell the user that changing the home currency affects future price conversions only; it does not recalculate prices already stored in the cellar.
+
+For OpenClaw, `mcp set` replaces the saved server object, so build its JSON from the current definition rather than creating a new minimal definition. The OpenClaw registry docs describe `show`, `set`, and the process-local scope of `reload`: [MCP registry](https://docs.openclaw.ai/cli/mcp/registry). The owning Gateway's restart command is documented at [Restart and supervision](https://docs.openclaw.ai/cli/gateway/restart-and-supervision). Hermes `mcp add` accepts repeated `--env` values and `--args` consumes the remaining arguments; verify these flags against the installed Hermes help before changing a real definition.
 
 `ULLAGE_HOME_CURRENCY` enables exchange-rate lookup and must be a three-letter ISO 4217 code, such as `KRW`. With only this variable set, Ullage uses its built-in historical ECB rates through Frankfurter. `ULLAGE_FX_RATE_URL` is optional and overrides the built-in provider. It must be an `http://` or `https://` URL template containing `{currency}` and may contain `{date}`. The custom endpoint must return JSON with a positive numeric `rate`; it may include `date` or `rateDate` for the actual observation date.
 
