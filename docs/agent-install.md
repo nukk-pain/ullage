@@ -6,8 +6,8 @@ You are an AI agent installing or operating ullage for the user. SQLite is the d
 
 1. Check the active runner's MCP server list for `ullage`.
 2. Check the configured MCP command path and find whether it belongs to an existing ullage checkout.
-3. If either check finds an installation, follow [Upgrade an existing installation](#upgrade-an-existing-installation) before making another checkout.
-4. If neither check finds an installation, continue with [Install from a checkout](#install-from-a-checkout).
+3. If either check finds an installation, follow [Upgrade an existing installation](#3-upgrade-an-existing-installation) before making another checkout.
+4. If neither check finds an installation, continue with [Install from a checkout](#2-install-from-a-checkout).
 
 ## 2. Install from a checkout
 
@@ -21,12 +21,12 @@ You are an AI agent installing or operating ullage for the user. SQLite is the d
    npm run build
    ```
 
-3. Use the absolute path to `apps/mcp/dist/index.js` as `<ABS>` in the runner command.
+3. From the checkout root, run `pwd` and use its output as `<REPO>`, the absolute path to the cloned repository. The server entry point is `<REPO>/apps/mcp/dist/index.js`.
 4. Register ullage with the runner:
 
-   - **OpenClaw:** `openclaw mcp add ullage --command node --arg <ABS>/apps/mcp/dist/index.js`
+   - **OpenClaw:** `openclaw mcp add ullage --command node --arg <REPO>/apps/mcp/dist/index.js`
      Add one `--env KEY=VALUE` for each environment variable the server needs. OpenClaw probes the server before it saves the definition. The CLI manages the OpenClaw `mcp.servers` configuration; a generic `mcpServers` JSON file is not an OpenClaw configuration format.
-   - **Hermes:** `hermes mcp add ullage --command node --args <ABS>/apps/mcp/dist/index.js`
+   - **Hermes:** `hermes mcp add ullage --command node --args <REPO>/apps/mcp/dist/index.js`
      Add each `--env KEY=VALUE` before `--args` when needed, because `--args` consumes the remaining arguments.
    - **Generic MCP client:** configure a stdio server using this generic MCP JSON shape:
 
@@ -35,7 +35,7 @@ You are an AI agent installing or operating ullage for the user. SQLite is the d
        "mcpServers": {
          "ullage": {
            "command": "node",
-           "args": ["<ABS>/apps/mcp/dist/index.js"]
+           "args": ["<REPO>/apps/mcp/dist/index.js"]
          }
        }
      }
@@ -46,31 +46,49 @@ You are an AI agent installing or operating ullage for the user. SQLite is the d
 
 The default SQLite adapter needs no token, Docker, or separate server. Do not configure an external wine API for a normal install. ullage does not perform OCR: read label and receipt images with your own vision, confirm uncertain rows with the user, and send only confirmed wine data to an import tool.
 
-For an explicitly requested HTTP cellar integration, set `ULLAGE_BACKEND=http` and `ULLAGE_HTTP_BASE_URL` in the MCP server environment. `ULLAGE_HTTP_HEADERS` is optional JSON containing string-valued headers; `ULLAGE_HTTP_TIMEOUT_MS` accepts 1 through 300000 and defaults to 10000; `ULLAGE_HTTP_MAX_RESPONSE_BYTES` accepts 1 through 1073741824 and defaults to 33554432. The previous `ULLAGE_BACKEND=openclaw` value was removed; use `http` for this adapter. Do not choose a remote backend or invent endpoint or authentication values for the user.
+For an explicitly requested HTTP cellar integration, set `ULLAGE_BACKEND=http` and the required `ULLAGE_HTTP_BASE_URL` in the MCP server environment. `ULLAGE_HTTP_HEADERS` is optional JSON containing string-valued headers; `ULLAGE_HTTP_TIMEOUT_MS` accepts 1 through 300000 and defaults to 10000; `ULLAGE_HTTP_MAX_RESPONSE_BYTES` accepts 1 through 1073741824 and defaults to 33554432. Do not choose a remote backend or invent endpoint or authentication values for the user.
 
 ## 3. Upgrade an existing installation
 
-Use the exact database path from the MCP server's `ULLAGE_DB` environment when it is set; otherwise the database is `~/.ullage/cellar.db`. SQLite's `.backup` command makes a consistent backup while the database is in use. If the runner does not pass `ULLAGE_DB` to your shell, set `DB` to the configured database path before running the backup:
+Use the exact database path from the MCP server's `ULLAGE_DB` environment when it is set; otherwise the database is `~/.ullage/cellar.db`. If the runner does not pass `ULLAGE_DB` to your shell, set `DB` to the configured database path. The backup commands preserve that explicit `DB` value, verify the source path before copying, then check the backup integrity and compare its wine row count and quantity total with the source:
 
 ```bash
-DB="${ULLAGE_DB:-$HOME/.ullage/cellar.db}"
+DB="${DB:-${ULLAGE_DB:-$HOME/.ullage/cellar.db}}"
 BACKUP="$HOME/ullage-backups/cellar-before-update-$(date +%Y%m%d-%H%M%S).db"
+test -f "$DB" || { echo "Database does not exist: $DB" >&2; exit 1; }
+DB="$(cd "$(dirname "$DB")" && pwd)/$(basename "$DB")"
+printf 'Backing up database: %s\n' "$DB"
 mkdir -p "$HOME/ullage-backups"
 sqlite3 "$DB" ".backup '$BACKUP'"
+test -s "$BACKUP" || { echo "Backup is missing or empty: $BACKUP" >&2; exit 1; }
+SOURCE_CHECK="$(sqlite3 "$DB" 'PRAGMA integrity_check; SELECT count(*) FROM wines; SELECT coalesce(sum(quantity), 0) FROM wines;')"
+BACKUP_CHECK="$(sqlite3 "$BACKUP" 'PRAGMA integrity_check; SELECT count(*) FROM wines; SELECT coalesce(sum(quantity), 0) FROM wines;')"
+printf 'Source integrity, wine rows, bottle total:\n%s\n' "$SOURCE_CHECK"
+printf 'Backup integrity, wine rows, bottle total:\n%s\n' "$BACKUP_CHECK"
+test "$SOURCE_CHECK" = "$BACKUP_CHECK" || { echo "Backup verification differs from source" >&2; exit 1; }
 ```
 
-If `sqlite3` is unavailable, stop the runner and every other Ullage process that can write to the database, then copy the database file. Copying a live SQLite database file alone can omit uncheckpointed WAL data.
+If `sqlite3` is unavailable, stop the runner and every other Ullage process that can write to the database before copying. Then copy the database and any existing sidecars with:
+
+```bash
+cp "$DB" "$BACKUP"
+test ! -f "$DB-wal" || cp "$DB-wal" "$BACKUP-wal"
+test ! -f "$DB-shm" || cp "$DB-shm" "$BACKUP-shm"
+```
+
+Keep the sidecars beside the copied database until SQLite opens it. Install or use `sqlite3` to run the integrity and row-count checks above before continuing. Never copy a live database file by itself.
 
 1. Tell the user that you are about to upgrade ullage.
-2. Create a readable SQLite backup before changing the checkout, then confirm that the backup exists and is non-empty. If `sqlite3` is unavailable, stop the runner and every other Ullage process that can write to the database before copying the database file; copying a live SQLite database file alone can omit uncheckpointed WAL data.
+2. Create a readable SQLite backup before changing the checkout, then confirm the backup integrity, wine row count, and bottle total against the source.
 3. Call `cellar_summary` and record its wine count before the upgrade.
 4. In the existing checkout, run `git fetch origin`.
 5. Run `git status --short` and inspect local commits with `git rev-list --left-right --count HEAD...origin/main`; ask the user before proceeding if there are local file changes or local commits they need.
-6. Run `git merge --ff-only origin/main`. If it fails because the public history was rewritten on 2026-10-17, explain that the old and new histories cannot be merged, confirm that no local file changes or commits need preservation, and only then run `git reset --hard origin/main`; otherwise ask the user how to preserve local work.
-7. Run `npm ci && npm run build` from the checkout.
-8. Replace the running MCP process and start a new agent session. For Hermes, start a fresh session or restart the process that owns the MCP connection. For OpenClaw, restart the Gateway that owns the MCP connection with `openclaw gateway restart`; `openclaw mcp reload` refreshes only runtimes owned by that CLI process and does not refresh a separate Gateway. See [OpenClaw MCP connection guidance](https://docs.openclaw.ai/tools/mcp) and [OpenClaw gateway restart guidance](https://docs.openclaw.ai/cli/gateway/restart-and-supervision).
-9. Call `cellar_summary` and compare the wine count with the count recorded before the update.
-10. Tell the user what happened during migration: existing wine and event records remain in place; if duplicate active holds exist for one wine, the newest active hold remains and older ones are released; legacy tasting image URLs are copied into their image field once; and idempotency metadata columns are added. Also explain the breaking changes: the old `openclaw` backend name is now `http`, and explicitly sending a null or empty `quantity` is rejected. Omit details that do not apply to the user's configured backend or database.
+6. Before starting the updated server, inspect the existing MCP environment for both `ULLAGE_STORE` and `ULLAGE_BACKEND`. The code uses any non-empty `ULLAGE_STORE` value before `ULLAGE_BACKEND`; when changing backends, remove `ULLAGE_STORE` or set it to the same backend value so it cannot override the new setting.
+7. If the existing environment has `ULLAGE_BACKEND=openclaw`, change it to `ULLAGE_BACKEND=http` before starting the updated server and set `ULLAGE_HTTP_BASE_URL` to the HTTP service URL supplied by the user. `ULLAGE_HTTP_BASE_URL` is required for HTTP; do not start the new server until it is set. Do not invent the URL or credentials.
+8. Run `npm ci && npm run build` from the checkout.
+9. Replace the running MCP process and start a new agent session. For Hermes, start a fresh session or restart the process that owns the MCP connection. For OpenClaw, restart the Gateway that owns the MCP connection with `openclaw gateway restart`; `openclaw mcp reload` refreshes only runtimes owned by that CLI process and does not refresh a separate Gateway. See [OpenClaw MCP connection guidance](https://docs.openclaw.ai/tools/mcp) and [OpenClaw gateway restart guidance](https://docs.openclaw.ai/cli/gateway/restart-and-supervision).
+10. Call `cellar_summary` and compare the wine count with the count recorded before the update. Older databases with duplicate active holds can report the same wine more than once before migration, so a changed summary count may be caused by that cleanup. If the summary counts differ, compare `SELECT count(*) FROM wines;` and `SELECT coalesce(sum(quantity), 0) FROM wines;` before and after to confirm the wine rows and bottle total.
+11. Tell the user what happened during migration: existing wine and event records remain in place; if duplicate active holds exist for one wine, the newest active hold remains and older ones are released; legacy tasting image URLs are copied into their image field once; and idempotency metadata columns are added. Also explain the breaking changes: the old `openclaw` backend name is now `http`, and explicitly sending a null or empty `quantity` is rejected. Omit details that do not apply to the user's configured backend or database.
 
 ## 4. MCP tools
 
