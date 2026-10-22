@@ -184,6 +184,43 @@ test('filterWines matches name, producer, region, varietal, and country case-ins
   assert.equal(filterWines(wines, 'rioja').length, 0);
 });
 
+test('filterWines matches multi-token queries regardless of field order', () => {
+  const wines = [
+    wineFixture({ id: 'paso', name: 'Paso Robles Cabernet Sauvignon', producer: 'Postmark', vintage: 2023 }),
+    wineFixture({ id: 'barolo', name: 'Barolo', producer: 'Conterno', region: 'Piedmont' })
+  ];
+  assert.deepEqual(filterWines(wines, 'Postmark Paso Robles').map((w) => w.id), ['paso']);
+  assert.deepEqual(filterWines(wines, 'cabernet  postmark').map((w) => w.id), ['paso']);
+  assert.deepEqual(filterWines(wines, 'piedmont conterno barolo').map((w) => w.id), ['barolo']);
+  assert.equal(filterWines(wines, 'postmark barolo').length, 0);
+});
+
+test('resolveWineByName does not resolve an out-of-stock exact name over in-stock producer matches', () => {
+  const wines = [
+    wineFixture({ id: 'postmark-2022', name: 'POSTMARK', producer: 'Postmark', vintage: 2022, quantity: 0 }),
+    wineFixture({ id: 'postmark-2023', name: 'Paso Robles Cabernet Sauvignon', producer: 'Postmark', vintage: 2023, quantity: 1 })
+  ];
+
+  const byProducer = resolveWineByName(wines, 'postmark');
+  assert.equal(byProducer.status, 'ambiguous');
+  assert.deepEqual(byProducer.status === 'ambiguous' && byProducer.candidates.map((w) => w.id), ['postmark-2023', 'postmark-2022']);
+
+  const fullPhrase = resolveWineByName(wines, 'Postmark Paso Robles Cabernet Sauvignon 2023');
+  assert.equal(fullPhrase.status, 'resolved');
+  assert.equal(fullPhrase.status === 'resolved' && fullPhrase.wine.id, 'postmark-2023');
+
+  // An in-stock exact name still wins over other producer matches.
+  const inStockExact = resolveWineByName([{ ...wines[0]!, quantity: 2 }, wines[1]!], 'postmark');
+  assert.equal(inStockExact.status === 'resolved' && inStockExact.matchKind, 'exact');
+  assert.equal(inStockExact.status === 'resolved' && inStockExact.wine.id, 'postmark-2022');
+
+  // A lone out-of-stock exact name still resolves, as does one whose other matches are also out of stock.
+  const lone = resolveWineByName([wines[0]!], 'postmark');
+  assert.equal(lone.status === 'resolved' && lone.wine.id, 'postmark-2022');
+  const allEmpty = resolveWineByName([wines[0]!, { ...wines[1]!, quantity: 0 }], 'postmark');
+  assert.equal(allEmpty.status === 'resolved' && allEmpty.wine.id, 'postmark-2022');
+});
+
 test('resolveWineByName resolves exact, surfaces ambiguity, and splits a trailing vintage', () => {
   const wines = [
     wineFixture({ id: 'w-1', name: 'Barolo', vintage: 2016, quantity: 0 }),

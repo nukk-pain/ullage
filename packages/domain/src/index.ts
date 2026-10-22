@@ -448,44 +448,63 @@ export function filterTastings(tastings: readonly Tasting[], query: NormalizedTa
     .slice(query.offset, query.offset + query.limit);
 }
 
-// Case-insensitive substring search across the fields people actually remember.
+// Case-insensitive search across the fields people actually remember. Every
+// whitespace-separated query token must appear somewhere, in any field order.
 export function filterWines(wines: readonly Wine[], query: unknown): Wine[] {
   const needle = normalizeMatchText(query);
   if (!needle) return [...wines];
-  return wines.filter((wine) =>
-    [wine.name, wine.producer, wine.region, wine.varietal, wine.country].map(normalizeMatchText).join(' ').includes(needle)
-  );
+  const tokens = needle.split(' ');
+  return wines.filter((wine) => {
+    const haystack = [wine.name, wine.producer, wine.region, wine.varietal, wine.country].map(normalizeMatchText).join(' ');
+    return tokens.every((token) => haystack.includes(token));
+  });
 }
 
 const RESOLVE_CANDIDATE_LIMIT = 8;
 
 // Resolve a natural-language wine name to one cellar wine, or say why we cannot:
-// Exact-name match wins; when the full query has no exact match, a trailing
-// vintage is split and required. A lone fuzzy candidate resolves; several candidates
-// are returned for disambiguation. In-stock wines rank first.
+// Exact-name match wins, unless every exact-name wine is out of stock while other
+// in-stock wines match the query; then all are returned for disambiguation. When the
+// full query has no exact match, a trailing vintage is split and required. A lone fuzzy
+// candidate resolves; several candidates are returned for disambiguation. In-stock
+// wines rank first.
 export function resolveWineByName(wines: readonly Wine[], rawQuery: unknown): ResolveWineResult {
   const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
   if (!query) return { status: 'none', query };
 
   const queryKey = normalizeMatchText(query);
   const wholeNameMatches = wines.filter((wine) => normalizeMatchText(wine.name) === queryKey);
-  if (wholeNameMatches.length > 0) return resolveWineCandidates(wines, query, wholeNameMatches, query);
+  const search = searchWineCandidates(wines, query);
+  if (wholeNameMatches.length > 0) {
+    const otherInStock = search.candidates.filter((wine) => wine.quantity > 0 && !wholeNameMatches.includes(wine));
+    if (wholeNameMatches.some((wine) => wine.quantity > 0) || otherInStock.length === 0) {
+      return resolveWineCandidates(wines, query, wholeNameMatches, query);
+    }
+    return { status: 'ambiguous', query, candidates: rankWineCandidates([...wholeNameMatches, ...otherInStock]).slice(0, RESOLVE_CANDIDATE_LIMIT) };
+  }
 
+  if (search.candidates.length === 0) return { status: 'none', query };
+  return resolveWineCandidates(wines, query, search.candidates, search.effectiveQuery);
+}
+
+function searchWineCandidates(wines: readonly Wine[], query: string): { candidates: Wine[]; effectiveQuery: string } {
   const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
   const effectiveQuery = vintageMatch?.[1] ?? query;
   let candidates = filterWines(wines, effectiveQuery);
   if (vintageMatch !== null) candidates = candidates.filter((wine) => wine.vintage === Number(vintageMatch[2]));
-  if (candidates.length === 0) return { status: 'none', query };
-
-  return resolveWineCandidates(wines, query, candidates, effectiveQuery);
+  return { candidates, effectiveQuery };
 }
 
-function resolveWineCandidates(wines: readonly Wine[], query: string, candidates: readonly Wine[], effectiveQuery: string): ResolveWineResult {
-  const ranked = [...candidates].sort((left, right) => {
+function rankWineCandidates(candidates: readonly Wine[]): Wine[] {
+  return [...candidates].sort((left, right) => {
     const stock = Number(right.quantity > 0) - Number(left.quantity > 0);
     if (stock !== 0) return stock;
     return left.name.localeCompare(right.name);
   });
+}
+
+function resolveWineCandidates(wines: readonly Wine[], query: string, candidates: readonly Wine[], effectiveQuery: string): ResolveWineResult {
+  const ranked = rankWineCandidates(candidates);
   const queryKey = normalizeMatchText(effectiveQuery);
   const exactMatches = ranked.filter((wine) => normalizeMatchText(wine.name) === queryKey);
 
