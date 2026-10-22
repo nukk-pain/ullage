@@ -170,16 +170,21 @@ test('filterTastings applies source, rating, venue, and text filters over the un
   assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ minRating: 4 })).map((t) => t.id), ['t-1']);
   assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ venue: 'osteria' })).map((t) => t.id), ['t-1']);
   assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ query: 'raveneau' })).map((t) => t.id), ['t-2']);
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ query: 'Raveneau Burgundy' })).map((t) => t.id), ['t-2']);
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ query: 'Barolo Piedmont' })).map((t) => t.id), ['t-1']);
+  assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ query: 'Barolo Burgundy' })).map((t) => t.id), []);
   assert.deepEqual(filterTastings(tastings, normalizeTastingQuery({ limit: 1, offset: 1 })).map((t) => t.id), ['t-2']);
 });
 
-test('filterWines matches name, producer, region, varietal, and country case-insensitively', () => {
+test('filterWines matches name, vintage, producer, region, varietal, and country case-insensitively', () => {
   const wines = [
-    wineFixture({ id: 'w-1', name: 'Barolo', producer: 'Conterno', region: 'Piedmont', varietal: 'Nebbiolo', country: 'Italy' }),
+    wineFixture({ id: 'w-1', name: 'Barolo', producer: 'Conterno', vintage: 2016, region: 'Piedmont', varietal: 'Nebbiolo', country: 'Italy' }),
     wineFixture({ id: 'w-2', name: 'Chablis', producer: 'Raveneau', region: 'Burgundy', varietal: 'Chardonnay', country: 'France' })
   ];
   assert.deepEqual(filterWines(wines, 'nebbiolo').map((w) => w.id), ['w-1']);
   assert.deepEqual(filterWines(wines, 'FRANCE').map((w) => w.id), ['w-2']);
+  assert.deepEqual(filterWines(wines, 'Barolo 2016').map((w) => w.id), ['w-1']);
+  assert.deepEqual(filterWines(wines, '2016').map((w) => w.id), ['w-1']);
   assert.equal(filterWines(wines, '').length, 2);
   assert.equal(filterWines(wines, 'rioja').length, 0);
 });
@@ -298,6 +303,34 @@ test('resolveWineByName applies article handling and keeps all trailing-vintage 
   ], 'Barolo 2016');
   assert.equal(vintage.status, 'ambiguous');
   assert.deepEqual(vintage.status === 'ambiguous' && vintage.candidates.map((wine) => wine.id), ['riserva', 'barolo']);
+});
+
+test('resolveWineByName accepts a standalone vintage anywhere and falls back for lone-year queries', () => {
+  const wines = [
+    wineFixture({ id: 'postmark-2022', name: 'Paso Robles Cabernet Sauvignon', producer: 'Postmark', vintage: 2022 }),
+    wineFixture({ id: 'postmark-2023', name: 'Paso Robles Cabernet Sauvignon', producer: 'Postmark', vintage: 2023 }),
+    wineFixture({ id: 'barolo-2016', name: 'Barolo', vintage: 2016 })
+  ];
+
+  for (const query of ['Postmark 2023', '2023 Postmark', 'Postmark (2023)']) {
+    const result = resolveWineByName(wines, query);
+    assert.equal(result.status === 'resolved' && result.wine.id, 'postmark-2023');
+  }
+  const loneYear = resolveWineByName(wines, '2016');
+  assert.equal(loneYear.status === 'resolved' && loneYear.wine.id, 'barolo-2016');
+});
+
+test('resolveWineByName ranks available wines ahead of held and empty matches', () => {
+  const held = wineFixture({ id: 'held', name: 'Postmark', producer: 'Postmark', quantity: 2, hold: {
+    id: 'hold-1', wineId: 'held', reason: 'Reserved', until: null,
+    createdAt: '2026-01-02T00:00:00.000Z', releasedAt: null
+  } });
+  const available = wineFixture({ id: 'available', name: 'Postmark Cabernet', producer: 'Postmark', quantity: 1, hold: null });
+  const empty = wineFixture({ id: 'empty', name: 'Postmark Empty', producer: 'Postmark', quantity: 0, hold: null });
+
+  const result = resolveWineByName([held, empty, available], 'Postmark');
+  assert.equal(result.status, 'ambiguous');
+  assert.deepEqual(result.status === 'ambiguous' && result.candidates.map((wine) => wine.id), ['available', 'held', 'empty']);
 });
 
 test('resolveWineByName reports candidate truncation metadata', () => {

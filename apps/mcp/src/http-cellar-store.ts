@@ -106,11 +106,14 @@ export class HttpCellarStore implements CellarStore {
     });
   }
 
-  async listWines(query?: string, inStock?: boolean): Promise<Wine[]> {
+  async listWines(query?: string, inStock?: boolean, available?: boolean): Promise<Wine[]> {
     const response = await this.request('GET', '/wines');
-    const filtered = filterWines(wineListFromJson(response.body), query);
-    if (inStock === undefined) return filtered;
-    return filtered.filter((wine) => (inStock ? wine.quantity > 0 : wine.quantity === 0));
+    let filtered = filterWines(wineListFromJson(response.body), query);
+    if (inStock !== undefined) filtered = filtered.filter((wine) => (inStock ? wine.quantity > 0 : wine.quantity === 0));
+    if (available !== undefined) {
+      filtered = filtered.filter((wine) => available ? wine.quantity > 0 && wine.hold == null : wine.quantity === 0 || wine.hold != null);
+    }
+    return filtered;
   }
 
   async getWine(id: string): Promise<Wine | undefined> {

@@ -91,6 +91,7 @@ class AsyncFakeStore implements CellarStore {
   readonly consumptionUpdates: Array<{ readonly eventId: string; readonly input: UpdateConsumptionInput; readonly options: WriteOptions }> = [];
   readonly tastingInputs: Array<{ readonly input: RecordTastingInput; readonly options: WriteOptions }> = [];
   readonly tastingQueries: TastingQuery[] = [];
+  readonly listQueries: Array<{ readonly query: string | undefined; readonly inStock: boolean | undefined; readonly available: boolean | undefined }> = [];
 
   async addWine(input: AddWineInput, options: WriteOptions = {}): Promise<Wine> {
     this.addedInputs.push(input);
@@ -103,7 +104,8 @@ class AsyncFakeStore implements CellarStore {
     return { id: 'import-1', source: 'receipt', sourceId: 'receipt-1', purchaseDate: null, receiptImageUrl: null, wines: [sampleWine], createdAt: sampleWine.createdAt };
   }
 
-  async listWines(): Promise<Wine[]> {
+  async listWines(query?: string, inStock?: boolean, available?: boolean): Promise<Wine[]> {
+    this.listQueries.push({ query, inStock, available });
     return [sampleWine];
   }
 
@@ -263,8 +265,9 @@ test('resolve_wine, update_consumption, record_tasting, and list_tastings delega
   assert.deepEqual(store.tastingQueries, [{ source: 'external', minRating: 4 }]);
   assert.deepEqual(timeline, [sampleTasting]);
 
-  const searched = await tool(tools, 'list_wines').handler({ query: 'chablis' });
+  const searched = await tool(tools, 'list_wines').handler({ query: 'chablis', inStock: true, available: false });
   assert.deepEqual(searched, [sampleWine]);
+  assert.deepEqual(store.listQueries, [{ query: 'chablis', inStock: true, available: false }]);
 
   await assert.rejects(async () => tool(tools, 'update_consumption').handler({ eventId: 'consume-1', rating: 4 }), /idempotencyKey is required/);
   await assert.rejects(async () => tool(tools, 'record_tasting').handler({ name: 'Barolo', tastedAt: '2026-07-30' }), /idempotencyKey is required/);
@@ -405,6 +408,21 @@ test('createUllageTools reports missing wines with current error text', async ()
   await assert.rejects(async () => {
     await tool(tools, 'consume_wine').handler({ id: 'missing', quantity: 1, idempotencyKey: 'missing-consume-key' });
   }, /No wine with id missing/);
+});
+
+test('consume_wine rejects over-consume before calling the store', async () => {
+  const store = new AsyncFakeStore();
+  const tools = createUllageTools(store);
+
+  await assert.rejects(
+    tool(tools, 'consume_wine').handler({ id: 'wine-1', quantity: 3, idempotencyKey: 'over-consume-key' }),
+    /Cannot consume 3 bottles of Chablis 2020: only 2 left/
+  );
+  await assert.rejects(
+    tool(tools, 'consume_wine').handler({ id: 'wine-1', quantity: 0, idempotencyKey: 'zero-consume-key' }),
+    /quantity must be at least 1/
+  );
+  assert.deepEqual(store.consumedInputs, []);
 });
 
 function tool(tools: readonly McpTool[], name: string): McpTool {

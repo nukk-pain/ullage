@@ -1,3 +1,4 @@
+import { normalizeQuantity } from '@ullage/domain';
 import type { CellarStore } from './cellar-store.js';
 import { createPriceConverter, type ExchangeRateLookup, type PriceConverter } from './fx.js';
 import { createFxTools } from './fx-tools.js';
@@ -55,16 +56,21 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
     },
     {
       name: 'list_wines',
-      description: 'List wines with full fields (id, name, producer, vintage, region, varietal, quantity, drink-by, hold, etc.). Every word in `query` must appear somewhere in name/producer/region/varietal/country, in any field order. `inStock: true` returns only wines with bottles remaining; `false` only drunk-to-zero wines; omitted returns both.',
+      description: 'List wines with full fields (id, name, producer, vintage, region, varietal, quantity, drink-by, hold, etc.). Every word in `query` must appear somewhere in name/vintage/producer/region/varietal/country, in any field order. `inStock` filters bottle count and `available` filters whether a wine is ready to open; when both are supplied their filters intersect.',
       inputSchema: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Case-insensitive token search; every word must appear in name, producer, region, varietal, or country' },
-          inStock: { type: 'boolean', description: 'true = bottles remaining only, false = drunk-to-zero only' }
+          query: { type: 'string', description: 'Case-insensitive token search; every word must appear in name, vintage, producer, region, varietal, or country' },
+          inStock: { type: 'boolean', description: 'true = bottles remaining only, false = drunk-to-zero only' },
+          available: { type: 'boolean', description: 'true = ready to open (quantity > 0 and no active hold); false = empty or held' }
         },
         additionalProperties: false
       },
-      handler: async (args) => store.listWines(optionalId(args.query), typeof args.inStock === 'boolean' ? args.inStock : undefined)
+      handler: async (args) => store.listWines(
+        optionalId(args.query),
+        typeof args.inStock === 'boolean' ? args.inStock : undefined,
+        typeof args.available === 'boolean' ? args.available : undefined
+      )
     },
     {
       name: 'get_wine',
@@ -79,13 +85,13 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
     },
     {
       name: 'resolve_wine',
-      description: 'Resolve what the user called a wine ("the Barolo", "Chablis 2020") to one cellar wine. More than one distinct match returns ambiguous even when one name matches exactly; ask the user to pick from candidates. For ambiguous results, total is the full match count and truncated says whether the candidate list was limited. Returns none when nothing matches. Call this before consume_wine or hold_wine when you only have a name.',
+      description: 'Resolve what the user called a wine ("the Barolo", "Chablis 2020") to one cellar wine. More than one distinct match returns ambiguous even when one name matches exactly; ask the user to pick from candidates. For ambiguous results, total is the full match count and truncated says whether the candidate list was limited. Returns none when nothing matches. If the resolved wine has a non-null hold, it is reserved; do not consume_wine until the user releases the hold. Call this before consume_wine or hold_wine when you only have a name.',
       inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'The wine as the user said it' } }, required: ['query'], additionalProperties: false },
       handler: async (args) => store.resolveWine(stringArg(args, 'query'))
     },
     {
       name: 'add_wine',
-      description: 'Add a bottle. Put the year in `vintage` (integer), not in `name`. quantity defaults to 1. Capture region/varietal/drink-by when known; from a receipt also capture price, purchaseDate (YYYY-MM-DD), and store.',
+      description: 'Add a bottle. Put the year in `vintage` (integer), not in `name`. quantity defaults to 1. Capture region/varietal/drink-by when known; from a receipt also capture price, purchaseDate (YYYY-MM-DD), and store. If an identical record already exists, its bottle count is increased instead of creating a duplicate row.',
       inputSchema: { type: 'object', properties: { ...wineProps, ...currencyProp, ...idempotencyProp }, required: ['name', 'idempotencyKey'], additionalProperties: false },
       handler: async (args) => {
         const options = requiredWriteOptions(args);
@@ -107,7 +113,7 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
     },
     {
       name: 'consume_wine',
-      description: 'Open/consume bottles of a wine by id: decrement quantity, record a rating and notes, and log a consumption event. Pass consumedAt when the bottle was opened earlier ("we drank it yesterday").',
+      description: 'Open/consume bottles of a wine by id: decrement quantity, record a rating and notes, and log a consumption event. Rejects a quantity above current stock instead of silently clamping it. Pass consumedAt when the bottle was opened earlier ("we drank it yesterday").',
       inputSchema: {
         type: 'object',
         properties: {
@@ -123,7 +129,16 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
       },
       handler: async (args) => {
         const id = stringArg(args, 'id');
-        const wine = await store.consumeWine(id, consumeInput(args), requiredWriteOptions(args));
+        const input = consumeInput(args);
+        const current = await store.getWine(id);
+        if (!current) throw new Error(`No wine with id ${id}`);
+        const requested = normalizeQuantity(input.quantity, 1);
+        if (requested < 1) throw new Error('quantity must be at least 1');
+        if (requested > current.quantity) {
+          const name = current.vintage === null ? current.name : `${current.name} ${current.vintage}`;
+          throw new Error(`Cannot consume ${requested} bottles of ${name}: only ${current.quantity} left`);
+        }
+        const wine = await store.consumeWine(id, input, requiredWriteOptions(args));
         if (!wine) throw new Error(`No wine with id ${id}`);
         return wine;
       }
@@ -216,13 +231,13 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
     },
     {
       name: 'import_label_photo_wines',
-      description: 'Save multiple agent-confirmed wines extracted from label photos as one atomic batch. The agent supplies structured fields after image/OCR work.',
+      description: 'Save multiple agent-confirmed wines extracted from label photos as one atomic batch. The agent supplies structured fields after image/OCR work. Exact duplicate rows are merged into one bottle count.',
       inputSchema: importSchema('label_photo'),
       handler: async (args) => importWithFx(args, 'label_photo')
     },
     {
       name: 'import_receipt_wines',
-      description: 'Save multiple agent-confirmed wines extracted from a receipt photo as one atomic batch, including price, purchaseDate, and store when known.',
+      description: 'Save multiple agent-confirmed wines extracted from a receipt photo as one atomic batch, including price, purchaseDate, and store when known. Exact duplicate rows are merged into one bottle count.',
       inputSchema: importSchema('receipt'),
       handler: async (args) => importWithFx(args, 'receipt')
     },

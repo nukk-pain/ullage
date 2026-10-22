@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ConsumptionEvent, Wine } from '@ullage/domain';
+import type { ConsumptionEvent, Wine, WineHold } from '@ullage/domain';
 import type { JsonObject } from './http-cellar-client.js';
 
 export type HttpConsumptionPage = {
@@ -21,8 +21,10 @@ export function wineFromConsumeResponse(value: unknown): Wine {
 
 export function wineFromJson(value: unknown): Wine {
   const object = requireRecord(value, 'HTTP wine response');
+  const id = requireString(object.id, 'wine.id');
+  const hold = holdFromJson(object.hold, id);
   return {
-    id: requireString(object.id, 'wine.id'),
+    id,
     name: requireString(object.name, 'wine.name'),
     producer: nullableString(object.producer),
     vintage: nullableInteger(object.vintage),
@@ -38,7 +40,21 @@ export function wineFromJson(value: unknown): Wine {
     drinkByDate: nullableString(object.drinkByDate),
     location: nullableString(object.location),
     createdAt: requireString(object.createdAt, 'wine.createdAt'),
-    updatedAt: requireString(object.updatedAt, 'wine.updatedAt')
+    updatedAt: requireString(object.updatedAt, 'wine.updatedAt'),
+    ...(hold === null ? {} : { hold })
+  };
+}
+
+function holdFromJson(value: unknown, wineId: string): WineHold | null {
+  if (value === undefined || value === null) return null;
+  const object = requireRecord(value, 'wine.hold');
+  return {
+    id: requireString(object.id, 'wine.hold.id'),
+    wineId: nullableString(object.wineId) ?? wineId,
+    reason: nullableString(object.reason),
+    until: nullableString(object.until),
+    createdAt: requireString(object.createdAt, 'wine.hold.createdAt'),
+    releasedAt: nullableString(object.releasedAt)
   };
 }
 

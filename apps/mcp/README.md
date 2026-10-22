@@ -8,15 +8,20 @@ On first use it opens the SQLite default adapter at `~/.ullage/cellar.db` (overr
 uses its own LLM (including vision for labels/receipts) and calls these tools:
 
 - `cellar_summary` — in-stock counts + recent wines (call first)
-- `list_wines` — full cellar, with optional `query` search and `inStock` filter
+- `list_wines` — full cellar, with optional `query` search (name, vintage, producer, region,
+  varietal, country) and `inStock` / `available` filters
 - `get_exchange_rate` — quote a currency in the configured home currency for a date
-- `resolve_wine` — natural-language name → one wine, candidates to disambiguate, or none
-- `add_wine` — `{ name, producer?, vintage?, quantity?, idempotencyKey }`
+- `resolve_wine` — natural-language name → one wine, candidates to disambiguate, or none;
+  a standalone vintage year can appear anywhere in the query, and a resolved held wine must be
+  released before it is consumed
+- `add_wine` — `{ name, producer?, vintage?, quantity?, idempotencyKey }`; adding an identical
+  record increments the existing bottle count instead of creating a duplicate row
 - `import_label_photo_wines` / `import_receipt_wines` — atomic confirmed batch saves, with
   batch-level `purchaseDate` and `receiptImageUrl`
 - `hold_wine`, `release_hold`, `list_holds` — protect bottles that should not be opened yet;
   aging holds carry an `until` date and re-holding updates it
-- `consume_wine` — `{ id, quantity?, rating?, notes?, consumedAt?, idempotencyKey }`
+- `consume_wine` — `{ id, quantity?, rating?, notes?, consumedAt?, idempotencyKey }`; rejects a
+  quantity above current stock instead of silently clamping it
 - `update_consumption` — fix the rating/notes on a past pour
 - `record_tasting` / `list_tastings` — wines drunk outside the cellar (restaurant, bar) plus a
   unified drink history across cellar pours and outside tastings
@@ -120,7 +125,8 @@ persists `Idempotency-Key` values.
 `Wine` responses use camelCase fields and must include non-empty `id`, `name`, `createdAt`, and
 `updatedAt`. Optional fields include `producer`, `vintage` (a JSON number), `region`, `country`,
 `varietal` (or response alias `grapeVariety`), `price`, `quantity`, `rating` (a JSON number),
-`notes`, `store`, `purchaseDate`, `drinkByDate`, and `location`. An add request that supplies
+`notes`, `store`, `purchaseDate`, `drinkByDate`, `location`, and `hold` (a nested active-hold object
+with `id`, `wineId`, `reason`, `until`, `createdAt`, and `releasedAt`). An add request that supplies
 `drink_by_date` or `location` must receive the corresponding response field so the client can
 confirm that the server saved it; otherwise the client reports that the result is unconfirmed.
 Consumption rows represent individual consumption events and must include non-empty `id`, `wineId`,

@@ -66,7 +66,7 @@ export class SqliteCellarStore implements CellarStore {
   }
 
   addWine(input: AddWineInput, options: WriteOptions = {}): Wine {
-    return this.idempotent('addWine', options.idempotencyKey, input, () => this.insertWine(normalizeAddWine(input), 'add'), () => [], options.idempotencyPayload);
+    return this.idempotent('addWine', options.idempotencyKey, input, () => this.insertOrMergeWine(normalizeAddWine(input), 'add'), () => [], options.idempotencyPayload);
   }
 
   importWines(input: BatchImportInput): BatchImportResult {
@@ -74,10 +74,14 @@ export class SqliteCellarStore implements CellarStore {
     return this.idempotent('importWines', normalizeIdempotencyKey(input.idempotencyKey), payload, () => {
       const normalized = normalizeBatchImport(input);
       const now = new Date().toISOString();
-      const wines = normalized.items.map((item) => {
+      const uniqueItems = new Map<string, ReturnType<typeof normalizeAddWine>>();
+      for (const item of normalized.items) {
         const { itemKey: _itemKey, ...fields } = item;
-        return this.insertWine(fields, 'batch_add', now);
-      });
+        const key = wineIdentity(fields);
+        const existing = uniqueItems.get(key);
+        uniqueItems.set(key, existing === undefined ? fields : { ...existing, quantity: existing.quantity + fields.quantity });
+      }
+      const wines = [...uniqueItems.values()].map((fields) => this.insertOrMergeWine(fields, 'batch_add', now));
       const result: BatchImportResult = {
         id: randomUUID(), source: normalized.source, sourceId: normalized.sourceId,
         purchaseDate: normalized.purchaseDate, receiptImageUrl: normalized.receiptImageUrl,
@@ -99,11 +103,14 @@ export class SqliteCellarStore implements CellarStore {
     return replayStoredIdempotent(this.db, operation, key, payload);
   }
 
-  listWines(query?: string, inStock?: boolean): Wine[] {
+  listWines(query?: string, inStock?: boolean, available?: boolean): Wine[] {
     const wines = (this.db.prepare(`${wineSelectSql()} ORDER BY w.created_at DESC`).all() as WineJoinRow[]).map(rowToWine);
-    const filtered = filterWines(wines, query);
-    if (inStock === undefined) return filtered;
-    return filtered.filter((wine) => (inStock ? wine.quantity > 0 : wine.quantity === 0));
+    let filtered = filterWines(wines, query);
+    if (inStock !== undefined) filtered = filtered.filter((wine) => (inStock ? wine.quantity > 0 : wine.quantity === 0));
+    if (available !== undefined) {
+      filtered = filtered.filter((wine) => available ? wine.quantity > 0 && wine.hold == null : wine.quantity === 0 || wine.hold != null);
+    }
+    return filtered;
   }
 
   getWine(id: string): Wine | undefined {
@@ -342,6 +349,20 @@ export class SqliteCellarStore implements CellarStore {
     return wine;
   }
 
+  private insertOrMergeWine(f: ReturnType<typeof normalizeAddWine>, action: Extract<ActivityAction, 'add' | 'batch_add'>, now = new Date().toISOString()): Wine {
+    const existing = this.listWines().find((wine) => wineIdentity(wine) === wineIdentity(f));
+    if (existing === undefined) return this.insertWine(f, action, now);
+
+    const quantity = existing.quantity + f.quantity;
+    this.db.prepare('UPDATE wines SET quantity = ?, updated_at = ? WHERE id = ?').run(quantity, now, existing.id);
+    const updated = { ...existing, quantity, updatedAt: now };
+    if (action === 'add') {
+      const bottleLabel = f.quantity === 1 ? 'bottle' : 'bottles';
+      this.logActivity('add', existing.id, `Added ${f.quantity} ${bottleLabel} to ${describe(existing)}; total ${quantity}`);
+    }
+    return updated;
+  }
+
   private idempotent<T>(operation: string, key: string | undefined, payload: unknown, work: () => T, legacyPayloads: () => readonly unknown[] = () => [], sourcePayload?: unknown): T {
     return runIdempotent(this.db, operation, key, payload, work, legacyPayloads, sourcePayload);
   }
@@ -353,6 +374,21 @@ export class SqliteCellarStore implements CellarStore {
   private logActivity(action: ActivityAction, wineId: string | null, summary: string): void {
     this.db.prepare('INSERT INTO activity_log (id, action, wine_id, summary, created_at) VALUES (?, ?, ?, ?, ?)').run(randomUUID(), action, wineId, summary, new Date().toISOString());
   }
+}
+
+function wineIdentity(wine: ReturnType<typeof normalizeAddWine>): string {
+  const normalizedString = (value: string | null): string | null => value === null ? null : value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/gu, ' ')
+    .trim();
+  return JSON.stringify([
+    normalizedString(wine.name), normalizedString(wine.producer), wine.vintage,
+    normalizedString(wine.region), normalizedString(wine.country), normalizedString(wine.varietal),
+    wine.price, normalizedString(wine.store), normalizedString(wine.purchaseDate),
+    normalizedString(wine.drinkByDate), normalizedString(wine.location), normalizedString(wine.notes)
+  ]);
 }
 
 function legacyBatchImportPayloads(input: BatchImportInput): readonly unknown[] {

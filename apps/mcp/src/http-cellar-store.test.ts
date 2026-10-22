@@ -573,3 +573,23 @@ test('HttpCellarStore supports listWines query filter and resolveWine over the w
     await server.close();
   }
 });
+
+test('HttpCellarStore intersects available and inStock filters', async () => {
+  const ready = { ...serviceWine, id: 'ready', name: 'Ready', quantity: 1 };
+  const held = { ...serviceWine, id: 'held', name: 'Held', quantity: 1, hold: {
+    id: 'hold-1', reason: 'Reserved', until: null,
+    createdAt: '2026-01-05T00:00:00.000Z', releasedAt: null
+  } };
+  const empty = { ...serviceWine, id: 'empty', name: 'Empty', quantity: 0 };
+  const server = await startFakeHTTPServer(() => ({ status: 200, body: { wines: [ready, held, empty] } }));
+  try {
+    const store = new HttpCellarStore(server.baseUrl);
+
+    assert.deepEqual((await store.listWines(undefined, true, true)).map((wine) => wine.id), ['ready']);
+    const heldWines = await store.listWines(undefined, true, false);
+    assert.deepEqual(heldWines.map((wine) => wine.id), ['held']);
+    assert.equal(heldWines[0]?.hold?.wineId, 'held');
+  } finally {
+    await server.close();
+  }
+});

@@ -24,6 +24,39 @@ test('add, list, and summarize wines (rich fields)', () => {
   assert.equal(store.summary().bottle_count, 4);
 });
 
+test('add_wine merges exact identities but keeps different purchase metadata separate', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const fields = { name: 'Côte Rôtie', producer: 'Jamet', vintage: 2020, price: 95, store: 'Cave', purchaseDate: '2026-10-01', notes: 'North cellar' };
+  const first = store.addWine(fields);
+  const second = store.addWine({ ...fields, name: ' cote  rotie ', producer: 'JAMET' });
+
+  assert.equal(second.id, first.id);
+  assert.equal(second.quantity, 2);
+  assert.equal(store.listWines().length, 1);
+  const addActivity = store.listActivity().filter((event) => event.action === 'add');
+  assert.equal(addActivity.length, 2);
+  assert.equal(addActivity.some((event) => /Added 1 bottle.*total 2/.test(event.summary)), true);
+
+  store.addWine({ ...fields, price: 96 });
+  assert.equal(store.listWines().length, 2);
+});
+
+test('import_wines deduplicates exact identities within a batch and sums quantities', () => {
+  const store = new SqliteCellarStore(':memory:');
+  const result = store.importWines({
+    idempotencyKey: 'dedupe-import-1', source: 'receipt',
+    items: [
+      { name: 'Barolo', producer: 'Conterno', vintage: 2016, quantity: 1, itemKey: 'line-1' },
+      { name: ' barolo ', producer: 'CONTERNO', vintage: 2016, quantity: 1, itemKey: 'line-2' }
+    ]
+  });
+
+  assert.equal(result.wines.length, 1);
+  assert.equal(result.wines[0]?.quantity, 2);
+  assert.equal(store.listWines().length, 1);
+  assert.equal(store.exportJson().imports[0]?.wines.length, 1);
+});
+
 test('consume decrements quantity and logs a per-pour event (wine rating untouched)', () => {
   const store = new SqliteCellarStore(':memory:');
   const wine = store.addWine({ name: 'Brunello', quantity: 2 });
@@ -144,9 +177,9 @@ test('record_tasting stores an external tasting without touching inventory, idem
 
 test('list_tastings merges cellar pours and external tastings newest-first with filters', () => {
   const store = new SqliteCellarStore(':memory:');
-  const wine = store.addWine({ name: 'Chablis', producer: 'Raveneau', quantity: 1 });
+  const wine = store.addWine({ name: 'Chablis', producer: 'Raveneau', region: 'Burgundy', quantity: 1 });
   store.consumeWine(wine.id, { quantity: 1, rating: 3, notes: 'a bit tight' });
-  store.recordTasting({ name: 'Barolo', tastedAt: '2099-01-01', venue: 'Osteria', rating: 4.5 }, { idempotencyKey: 't-1' });
+  store.recordTasting({ name: 'Barolo', region: 'Piedmont', tastedAt: '2099-01-01', venue: 'Osteria', rating: 4.5 }, { idempotencyKey: 't-1' });
 
   const all = store.listTastings();
   assert.equal(all.length, 2);
@@ -159,6 +192,9 @@ test('list_tastings merges cellar pours and external tastings newest-first with 
   assert.deepEqual(store.listTastings({ minRating: 4 }).map((t) => t.wineName), ['Barolo']);
   assert.deepEqual(store.listTastings({ venue: 'osteria' }).map((t) => t.wineName), ['Barolo']);
   assert.deepEqual(store.listTastings({ query: 'raveneau' }).map((t) => t.wineName), ['Chablis']);
+  assert.deepEqual(store.listTastings({ query: 'Raveneau Burgundy' }).map((t) => t.wineName), ['Chablis']);
+  assert.deepEqual(store.listTastings({ query: 'Barolo Piedmont' }).map((t) => t.wineName), ['Barolo']);
+  assert.deepEqual(store.listTastings({ query: 'Barolo Burgundy' }), []);
 });
 
 test('update_consumption patches rating/notes, honors clear flags, and preserves the rest', () => {
@@ -524,6 +560,18 @@ test('list_wines inStock filter and summary in-stock counts', () => {
   assert.equal(summary.bottle_count, 2);
   assert.equal(summary.consumed_out_count, 1);
   assert.deepEqual(summary.recent_wines.map((w) => w.name), ['Barolo']); // drunk-out wine not "recent"
+});
+
+test('list_wines available filter intersects with inStock', () => {
+  const store = new SqliteCellarStore(':memory:');
+  store.addWine({ name: 'Ready', quantity: 1 });
+  const held = store.addWine({ name: 'Held', quantity: 1 });
+  store.holdWine(held.id, { reason: 'Reserved' });
+  store.addWine({ name: 'Empty', quantity: 0 });
+
+  assert.deepEqual(store.listWines(undefined, true, true).map((wine) => wine.name), ['Ready']);
+  assert.deepEqual(store.listWines(undefined, true, false).map((wine) => wine.name), ['Held']);
+  assert.deepEqual(new Set(store.listWines(undefined, undefined, false).map((wine) => wine.name)), new Set(['Held', 'Empty']));
 });
 
 test('import batch-level purchaseDate fills items and lands on the import record', () => {

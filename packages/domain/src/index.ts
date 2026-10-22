@@ -449,20 +449,20 @@ function normalizeQueryText(value: unknown): string {
   return tokens.join(' ');
 }
 
-// Case-insensitive substring filter shared by every storage driver.
 export function filterTastings(tastings: readonly Tasting[], query: NormalizedTastingQuery): Tasting[] {
-  const needle = normalizeMatchText(query.query);
+  const queryText = normalizeQueryText(query.query);
+  const tokens = queryText.split(' ').filter(Boolean);
   const venueNeedle = normalizeMatchText(query.venue);
   return tastings
     .filter((tasting) => {
       if (query.source !== null && tasting.source !== query.source) return false;
       if (query.minRating !== null && (tasting.rating === null || tasting.rating < query.minRating)) return false;
       if (venueNeedle && !normalizeMatchText(tasting.venue).includes(venueNeedle)) return false;
-      if (needle) {
+      if (tokens.length > 0) {
         const haystack = [tasting.wineName, tasting.producer, tasting.region, tasting.venue, tasting.notes]
           .map(normalizeMatchText)
           .join(' ');
-        if (!haystack.includes(needle)) return false;
+        if (!tokens.every((token) => haystack.includes(token))) return false;
       }
       return true;
     })
@@ -478,7 +478,9 @@ export function filterWines(wines: readonly Wine[], query: unknown): Wine[] {
   if (!needle) return [];
   const tokens = needle.split(' ');
   return wines.filter((wine) => {
-    const haystack = [wine.name, wine.producer, wine.region, wine.varietal, wine.country].map(normalizeMatchText).join(' ');
+    const haystack = [wine.name, wine.vintage === null ? null : String(wine.vintage), wine.producer, wine.region, wine.varietal, wine.country]
+      .map(normalizeMatchText)
+      .join(' ');
     return tokens.every((token) => haystack.includes(token));
   });
 }
@@ -498,17 +500,21 @@ export function resolveWineByName(wines: readonly Wine[], rawQuery: unknown): Re
 }
 
 function searchWineCandidates(wines: readonly Wine[], query: string): { candidates: Wine[]; effectiveQuery: string } {
-  const vintageMatch = /^(.*\S)\s+((?:19|20)\d{2})$/.exec(query);
-  const effectiveQuery = vintageMatch?.[1] ?? query;
+  const vintageMatch = /(?<![\p{L}\p{N}])((?:19|20)\d{2})(?![\p{L}\p{N}])/u.exec(query);
+  const withoutVintage = vintageMatch === null
+    ? query
+    : `${query.slice(0, vintageMatch.index)}${query.slice(vintageMatch.index + vintageMatch[0].length)}`;
+  const effectiveQuery = vintageMatch !== null && normalizeQueryText(withoutVintage) ? withoutVintage : query;
   let candidates = filterWines(wines, effectiveQuery);
-  if (vintageMatch !== null) candidates = candidates.filter((wine) => wine.vintage === Number(vintageMatch[2]));
+  if (effectiveQuery !== query && vintageMatch !== null) candidates = candidates.filter((wine) => wine.vintage === Number(vintageMatch[1]));
   return { candidates, effectiveQuery };
 }
 
 function rankWineCandidates(candidates: readonly Wine[]): Wine[] {
   return [...candidates].sort((left, right) => {
-    const stock = Number(right.quantity > 0) - Number(left.quantity > 0);
-    if (stock !== 0) return stock;
+    const availabilityRank = (wine: Wine): number => wine.quantity === 0 ? 2 : wine.hold == null ? 0 : 1;
+    const availability = availabilityRank(left) - availabilityRank(right);
+    if (availability !== 0) return availability;
     return left.name.localeCompare(right.name);
   });
 }
