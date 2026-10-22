@@ -187,15 +187,20 @@ test('filterWines matches name, producer, region, varietal, and country case-ins
 test('filterWines matches multi-token queries regardless of field order', () => {
   const wines = [
     wineFixture({ id: 'paso', name: 'Paso Robles Cabernet Sauvignon', producer: 'Postmark', vintage: 2023 }),
-    wineFixture({ id: 'barolo', name: 'Barolo', producer: 'Conterno', region: 'Piedmont' })
+    wineFixture({ id: 'barolo', name: 'Barolo', producer: 'Conterno', region: 'Piedmont' }),
+    wineFixture({ id: 'rose', name: 'Rosé' })
   ];
   assert.deepEqual(filterWines(wines, 'Postmark Paso Robles').map((w) => w.id), ['paso']);
+  assert.deepEqual(filterWines(wines, 'Postmark, Paso Robles').map((w) => w.id), ['paso']);
   assert.deepEqual(filterWines(wines, 'cabernet  postmark').map((w) => w.id), ['paso']);
   assert.deepEqual(filterWines(wines, 'piedmont conterno barolo').map((w) => w.id), ['barolo']);
+  assert.deepEqual(filterWines(wines, 'rose').map((w) => w.id), ['rose']);
+  assert.deepEqual(filterWines(wines, 'the Barolo').map((w) => w.id), ['barolo']);
+  assert.equal(filterWines(wines, '...').length, 0);
   assert.equal(filterWines(wines, 'postmark barolo').length, 0);
 });
 
-test('resolveWineByName does not resolve an out-of-stock exact name over in-stock producer matches', () => {
+test('resolveWineByName treats every distinct match as ambiguous regardless of stock or exact name', () => {
   const wines = [
     wineFixture({ id: 'postmark-2022', name: 'POSTMARK', producer: 'Postmark', vintage: 2022, quantity: 0 }),
     wineFixture({ id: 'postmark-2023', name: 'Paso Robles Cabernet Sauvignon', producer: 'Postmark', vintage: 2023, quantity: 1 })
@@ -209,16 +214,16 @@ test('resolveWineByName does not resolve an out-of-stock exact name over in-stoc
   assert.equal(fullPhrase.status, 'resolved');
   assert.equal(fullPhrase.status === 'resolved' && fullPhrase.wine.id, 'postmark-2023');
 
-  // An in-stock exact name still wins over other producer matches.
   const inStockExact = resolveWineByName([{ ...wines[0]!, quantity: 2 }, wines[1]!], 'postmark');
-  assert.equal(inStockExact.status === 'resolved' && inStockExact.matchKind, 'exact');
-  assert.equal(inStockExact.status === 'resolved' && inStockExact.wine.id, 'postmark-2022');
+  assert.equal(inStockExact.status, 'ambiguous');
+  assert.deepEqual(inStockExact.status === 'ambiguous' && inStockExact.candidates.map((w) => w.id), ['postmark-2023', 'postmark-2022']);
 
-  // A lone out-of-stock exact name still resolves, as does one whose other matches are also out of stock.
   const lone = resolveWineByName([wines[0]!], 'postmark');
   assert.equal(lone.status === 'resolved' && lone.wine.id, 'postmark-2022');
   const allEmpty = resolveWineByName([wines[0]!, { ...wines[1]!, quantity: 0 }], 'postmark');
-  assert.equal(allEmpty.status === 'resolved' && allEmpty.wine.id, 'postmark-2022');
+  assert.equal(allEmpty.status, 'ambiguous');
+  assert.equal(allEmpty.status === 'ambiguous' && allEmpty.total, 2);
+  assert.equal(allEmpty.status === 'ambiguous' && allEmpty.truncated, false);
 });
 
 test('resolveWineByName resolves exact, surfaces ambiguity, and splits a trailing vintage', () => {
@@ -267,10 +272,42 @@ test('resolveWineByName resolves exact, surfaces ambiguity, and splits a trailin
     wineFixture({ id: 'name-exact', name: 'Barolo 2017', vintage: null }),
     wineFixture({ id: 'vintage-exact', name: 'Barolo', vintage: 2017 })
   ], 'Barolo 2017');
-  assert.equal(vintageName.status === 'resolved' && vintageName.wine.id, 'name-exact');
+  assert.equal(vintageName.status, 'ambiguous');
+  assert.deepEqual(vintageName.status === 'ambiguous' && vintageName.candidates.map((wine) => wine.id), ['vintage-exact', 'name-exact']);
   const sameVintageFuzzyBoundary = resolveWineByName([
     wineFixture({ id: 'grand-cru', name: 'Chablis 2019 Grand Cru', vintage: 2019 }),
     wineFixture({ id: 'base-name', name: 'Chablis', vintage: 2019 })
   ], 'Chablis 2019');
-  assert.equal(sameVintageFuzzyBoundary.status === 'resolved' && sameVintageFuzzyBoundary.wine.id, 'base-name');
+  assert.equal(sameVintageFuzzyBoundary.status, 'ambiguous');
+  assert.deepEqual(sameVintageFuzzyBoundary.status === 'ambiguous' && sameVintageFuzzyBoundary.candidates.map((wine) => wine.id), ['base-name', 'grand-cru']);
+});
+
+test('resolveWineByName applies article handling and keeps all trailing-vintage matches', () => {
+  const article = resolveWineByName([wineFixture({ id: 'barolo', name: 'Barolo' })], 'the Barolo');
+  assert.equal(article.status === 'resolved' && article.matchKind, 'exact');
+
+  const namedWithArticle = resolveWineByName([wineFixture({ id: 'prisoner', name: 'The Prisoner' })], 'the prisoner');
+  assert.equal(namedWithArticle.status === 'resolved' && namedWithArticle.matchKind, 'exact');
+
+  const punctuationOnly = resolveWineByName([wineFixture({ id: 'barolo', name: 'Barolo' })], '...');
+  assert.equal(punctuationOnly.status, 'none');
+
+  const vintage = resolveWineByName([
+    wineFixture({ id: 'barolo', name: 'Barolo', vintage: 2016, quantity: 0 }),
+    wineFixture({ id: 'riserva', name: 'Barolo Riserva', vintage: 2016, quantity: 1 })
+  ], 'Barolo 2016');
+  assert.equal(vintage.status, 'ambiguous');
+  assert.deepEqual(vintage.status === 'ambiguous' && vintage.candidates.map((wine) => wine.id), ['riserva', 'barolo']);
+});
+
+test('resolveWineByName reports candidate truncation metadata', () => {
+  const wines = Array.from({ length: 10 }, (_, index) => wineFixture({
+    id: `cabernet-${index + 1}`,
+    name: `Cabernet ${index + 1}`
+  }));
+  const result = resolveWineByName(wines, 'cabernet');
+  assert.equal(result.status, 'ambiguous');
+  assert.equal(result.status === 'ambiguous' && result.candidates.length, 8);
+  assert.equal(result.status === 'ambiguous' && result.total, 10);
+  assert.equal(result.status === 'ambiguous' && result.truncated, true);
 });

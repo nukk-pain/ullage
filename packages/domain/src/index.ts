@@ -206,7 +206,13 @@ export type UpdateConsumptionInput = {
 
 export type ResolveWineResult =
   | { readonly status: 'resolved'; readonly matchKind: 'exact' | 'single_candidate'; readonly wine: Wine }
-  | { readonly status: 'ambiguous'; readonly query: string; readonly candidates: readonly Wine[] }
+  | {
+      readonly status: 'ambiguous';
+      readonly query: string;
+      readonly candidates: readonly Wine[];
+      readonly total: number;
+      readonly truncated: boolean;
+    }
   | { readonly status: 'none'; readonly query: string };
 
 // A cellar activity-log entry: every change to the cellar, as a one-line summary.
@@ -425,7 +431,22 @@ export function normalizeTastingQuery(input: TastingQuery = {}): NormalizedTasti
 }
 
 function normalizeMatchText(value: unknown): string {
-  return typeof value === 'string' ? value.toLowerCase().trim().replace(/\s+/g, ' ') : '';
+  return typeof value === 'string'
+    ? value
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    : '';
+}
+
+function normalizeQueryText(value: unknown): string {
+  const tokens = normalizeMatchText(value).split(' ').filter(Boolean);
+  while (tokens.length > 1 && (tokens[0] === 'the' || tokens[0] === 'a' || tokens[0] === 'an')) tokens.shift();
+  return tokens.join(' ');
 }
 
 // Case-insensitive substring filter shared by every storage driver.
@@ -451,8 +472,10 @@ export function filterTastings(tastings: readonly Tasting[], query: NormalizedTa
 // Case-insensitive search across the fields people actually remember. Every
 // whitespace-separated query token must appear somewhere, in any field order.
 export function filterWines(wines: readonly Wine[], query: unknown): Wine[] {
-  const needle = normalizeMatchText(query);
-  if (!needle) return [...wines];
+  const rawQuery = typeof query === 'string' ? query.trim() : '';
+  if (!rawQuery) return [...wines];
+  const needle = normalizeQueryText(rawQuery);
+  if (!needle) return [];
   const tokens = needle.split(' ');
   return wines.filter((wine) => {
     const haystack = [wine.name, wine.producer, wine.region, wine.varietal, wine.country].map(normalizeMatchText).join(' ');
@@ -462,29 +485,16 @@ export function filterWines(wines: readonly Wine[], query: unknown): Wine[] {
 
 const RESOLVE_CANDIDATE_LIMIT = 8;
 
-// Resolve a natural-language wine name to one cellar wine, or say why we cannot:
-// Exact-name match wins, unless every exact-name wine is out of stock while other
-// in-stock wines match the query; then all are returned for disambiguation. When the
-// full query has no exact match, a trailing vintage is split and required. A lone fuzzy
-// candidate resolves; several candidates are returned for disambiguation. In-stock
-// wines rank first.
 export function resolveWineByName(wines: readonly Wine[], rawQuery: unknown): ResolveWineResult {
   const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
   if (!query) return { status: 'none', query };
 
-  const queryKey = normalizeMatchText(query);
-  const wholeNameMatches = wines.filter((wine) => normalizeMatchText(wine.name) === queryKey);
+  const queryKey = normalizeQueryText(query);
+  if (!queryKey) return { status: 'none', query };
+  const wholeNameMatches = wines.filter((wine) => normalizeQueryText(wine.name) === queryKey);
   const search = searchWineCandidates(wines, query);
-  if (wholeNameMatches.length > 0) {
-    const otherInStock = search.candidates.filter((wine) => wine.quantity > 0 && !wholeNameMatches.includes(wine));
-    if (wholeNameMatches.some((wine) => wine.quantity > 0) || otherInStock.length === 0) {
-      return resolveWineCandidates(wines, query, wholeNameMatches, query);
-    }
-    return { status: 'ambiguous', query, candidates: rankWineCandidates([...wholeNameMatches, ...otherInStock]).slice(0, RESOLVE_CANDIDATE_LIMIT) };
-  }
-
-  if (search.candidates.length === 0) return { status: 'none', query };
-  return resolveWineCandidates(wines, query, search.candidates, search.effectiveQuery);
+  const candidates = [...new Map([...wholeNameMatches, ...search.candidates].map((wine) => [wine.id, wine])).values()];
+  return resolveWineCandidates(query, candidates, search.effectiveQuery);
 }
 
 function searchWineCandidates(wines: readonly Wine[], query: string): { candidates: Wine[]; effectiveQuery: string } {
@@ -503,13 +513,14 @@ function rankWineCandidates(candidates: readonly Wine[]): Wine[] {
   });
 }
 
-function resolveWineCandidates(wines: readonly Wine[], query: string, candidates: readonly Wine[], effectiveQuery: string): ResolveWineResult {
+function resolveWineCandidates(query: string, candidates: readonly Wine[], effectiveQuery: string): ResolveWineResult {
   const ranked = rankWineCandidates(candidates);
-  const queryKey = normalizeMatchText(effectiveQuery);
-  const exactMatches = ranked.filter((wine) => normalizeMatchText(wine.name) === queryKey);
-
-  if (exactMatches.length === 1) return { status: 'resolved', matchKind: 'exact', wine: exactMatches[0] };
-  if (exactMatches.length > 1) return { status: 'ambiguous', query, candidates: exactMatches.slice(0, RESOLVE_CANDIDATE_LIMIT) };
-  if (ranked.length === 1) return { status: 'resolved', matchKind: 'single_candidate', wine: ranked[0] };
-  return { status: 'ambiguous', query, candidates: ranked.slice(0, RESOLVE_CANDIDATE_LIMIT) };
+  if (ranked.length === 0) return { status: 'none', query };
+  if (ranked.length === 1) {
+    const exactKeys = new Set([normalizeQueryText(query), normalizeQueryText(effectiveQuery)]);
+    const matchKind = exactKeys.has(normalizeQueryText(ranked[0]?.name)) ? 'exact' : 'single_candidate';
+    return { status: 'resolved', matchKind, wine: ranked[0] };
+  }
+  const candidatesPage = ranked.slice(0, RESOLVE_CANDIDATE_LIMIT);
+  return { status: 'ambiguous', query, candidates: candidatesPage, total: ranked.length, truncated: ranked.length > candidatesPage.length };
 }

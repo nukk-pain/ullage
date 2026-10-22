@@ -55,11 +55,11 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
     },
     {
       name: 'list_wines',
-      description: 'List wines with full fields (id, name, producer, vintage, region, varietal, quantity, drink-by, hold, etc.). `query` searches name/producer/region/varietal/country. `inStock: true` returns only wines with bottles remaining; `false` only drunk-to-zero wines; omitted returns both.',
+      description: 'List wines with full fields (id, name, producer, vintage, region, varietal, quantity, drink-by, hold, etc.). Every word in `query` must appear somewhere in name/producer/region/varietal/country, in any field order. `inStock: true` returns only wines with bottles remaining; `false` only drunk-to-zero wines; omitted returns both.',
       inputSchema: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Case-insensitive substring search over name, producer, region, varietal, country' },
+          query: { type: 'string', description: 'Case-insensitive token search; every word must appear in name, producer, region, varietal, or country' },
           inStock: { type: 'boolean', description: 'true = bottles remaining only, false = drunk-to-zero only' }
         },
         additionalProperties: false
@@ -79,7 +79,7 @@ export function createUllageTools(store: CellarStore, convertPrice: PriceConvert
     },
     {
       name: 'resolve_wine',
-      description: 'Resolve what the user called a wine ("the Barolo", "Chablis 2020") to one cellar wine. Returns status resolved (use the wine id), ambiguous (ask the user to pick a candidate), or none. Call this before consume_wine or hold_wine when you only have a name.',
+      description: 'Resolve what the user called a wine ("the Barolo", "Chablis 2020") to one cellar wine. More than one distinct match returns ambiguous even when one name matches exactly; ask the user to pick from candidates. For ambiguous results, total is the full match count and truncated says whether the candidate list was limited. Returns none when nothing matches. Call this before consume_wine or hold_wine when you only have a name.',
       inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'The wine as the user said it' } }, required: ['query'], additionalProperties: false },
       handler: async (args) => store.resolveWine(stringArg(args, 'query'))
     },
